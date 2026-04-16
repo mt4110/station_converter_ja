@@ -1,76 +1,75 @@
 # station_converter_ja
 
-High-performance Japanese Station Converter & API. Auto-updating, diff-aware, multi-DB delivery (PostgreSQL / MySQL / SQLite artifact), written in Rust & Next.js.
+全国駅データを自動更新・差分管理する Rust 製 Station Converter & API です。  
+PostgreSQL / MySQL を primary write DB にし、SQLite を read-only artifact として配布できます。
 
-全国の駅データを自動取得・差分管理し、駅検索 / 路線検索 / 近傍検索 API を提供するための雛形です。  
-`postal_converter_ja` と同じ思想で、**Rust の crawler + API**、**Next.js の example frontend**、**Nix flakes + Docker / Collima**、**Terraform 連携**を前提にしています。
+English README: [README_EN.md](README_EN.md)
 
-## 方針
+## まず最初に押さえること
 
-- primary write DB は **PostgreSQL / MySQL**
-- **SQLite は read-only artifact / 配布用途**
-- Redis は **任意キャッシュ**
-- source of truth は **station_versions**（immutable）
-- `stations_latest` は view / projection
-- 駅の `latitude` / `longitude` は **代表点**。原本 geometry は `geometry_geojson` に保持
-- MISE は使わず、**Nix flakes** を使う
-- **NixOS 専用 repo にはしない**。NixOS / macOS / Linux で同じ repo を使う
+この repo は `postal_converter_ja` と同じく、役割をはっきり分けています。
 
-## リポジトリ説明文（GitHub Description）
+- 常駐させるもの: `station-api`
+- scheduler から叩くもの: `station-ops job ingest-n02`
+- artifact までまとめる補助導線: `station-ops job ingest-n02 --export-sqlite`
+- dev 補助モード: `station-crawler -- --loop`
 
-> High-performance Japanese Station Converter & API. Auto-updating, diff-aware, multi-DB delivery (PostgreSQL / MySQL / SQLite artifact), written in Rust & Next.js.
+本番では `station-crawler` を常駐させません。  
+本番 ingest の公式入口は **`station-ops job ingest-n02`** です。
 
-日本語寄せにするなら:
+## 最短セットアップ
 
-> 全国駅データを自動更新・差分管理する Rust 製 Station Converter & API。PostgreSQL / MySQL / SQLite artifact 対応、Next.js example 付き。
+### 1. DB を選ぶ
 
-## 想定ソース
+- PostgreSQL で始める: `postgres`
+- MySQL で始める: `mysql`
 
-- v1 canonical: 国土数値情報 `N02`
-- optional overlay: `N05`（**非商用制限あり**のため opt-in）
-- future overlay: 駅データ.jp など
+以下は PostgreSQL 例です。
 
-現状の crawler は、**国土数値情報 N02 の公式 ZIP に同梱されている UTF-8 `Station.geojson`** を読み込み、
-`source_snapshots` / `station_versions` / `station_change_events` まで反映します。  
-同一駅レコード内の分割線形は自動で束ね、代表点を `latitude` / `longitude` に計算して保持します。
+### 2. env を作って DB を起動する
 
-## 主要ディレクトリ
-
-```text
-station_converter_ja/
-  .github/
-    workflows/
-  artifacts/
-    sqlite/
-  deploy/
-    helm/station-converter-ja/
-    k8s/base/
-    argocd/
-  docs/
-  frontend/
-  infra/
-    terraform/
-      modules/
-      platforms/aws/
-      platforms/gcp/
-      platforms/azure/
-  launcher/
-  scripts/
-  storage/
-    migrations/
-      postgres/
-      mysql/
-      sqlite/
-    schema/
-    sqlite/
-  worker/
-    shared/
-    api/
-    crawler/
-    ops/
+```bash
+./scripts/setup_nix_docker.sh postgres
 ```
 
-## ローカルポート
+これは次をまとめて行います。
+
+- `worker/api/.env`
+- `worker/crawler/.env`
+- `worker/ops/.env`
+- `frontend/.env.local`
+- `storage/locks`
+- `storage/sqlite`
+- `worker/crawler/temp_assets`
+- `docker compose up -d postgres`
+
+Rust 側のコマンドは、repo root から起動すると `worker/*/.env` を自動読込します。
+
+### 3. 開発 shell に入る
+
+```bash
+nix develop
+```
+
+### 4. migrate -> ingest -> export を通す
+
+```bash
+cargo run -p station-ops -- migrate
+cargo run -p station-ops -- job ingest-n02 --export-sqlite
+```
+
+ここまでで次が揃います。
+
+- primary write DB に N02 データを反映
+- `storage/sqlite/stations.sqlite3` を生成
+
+### 5. API を起動する
+
+```bash
+cargo run -p station-api
+```
+
+既定ポート:
 
 - API: `3212`
 - Frontend: `3213`
@@ -78,59 +77,7 @@ station_converter_ja/
 - PostgreSQL: `3215`
 - Redis: `3216`
 
-`postal_converter_ja` とポート帯をずらしてあるので、同時に立ち上げても衝突しにくいです。
-
-## クイックスタート
-
-### 1. DB 起動
-
-```bash
-docker compose up -d
-docker compose --profile cache up -d redis
-```
-
-macOS + Collima の例:
-
-```bash
-colima start
-docker context use colima
-docker compose up -d
-```
-
-### 2. env 配置
-
-```bash
-cp worker/api/.env.example worker/api/.env
-cp worker/crawler/.env.example worker/crawler/.env
-cp worker/ops/.env.example worker/ops/.env
-cp frontend/.env.local.example frontend/.env.local
-```
-
-### 3. Nix shell
-
-```bash
-nix develop
-```
-
-### 4. migrate
-
-```bash
-cargo run -p station-ops -- migrate
-```
-
-### 5. API
-
-```bash
-cargo run -p station-api
-```
-
-### 6. Crawler
-
-```bash
-cargo run -p station-crawler -- --once
-```
-
-### 7. Frontend
+### 6. Frontend 例を触る
 
 ```bash
 cd frontend
@@ -138,28 +85,84 @@ npm install
 npm run dev
 ```
 
-## Example frontend
+## 本番運用の導線
 
-`postal_converter_ja` と同じノリで、導入サンプルを置く前提です。
+### Self-hosted の標準形
 
-- `/examples/station-search` — 駅名検索
-- `/examples/line-search` — 路線から駅一覧
-- `/examples/nearby-search` — 緯度経度から近くの駅
+- resident service: `station-api`
+- scheduled job: `station-ops job ingest-n02`
+- optional chained job: `station-ops job ingest-n02 --export-sqlite`
 
-## `.github` 方針
+`external scheduler` でも `systemd timer` でも、この one-shot job を呼ぶ形に揃えます。
 
-コミュニティヘルス系は `mt4110/.github` に寄せ、**repo local には workflow だけ置く**前提です。  
-この repo には `.github/workflows/` だけ置いています。
+### systemd を使う場合
 
-## まだやっていないこと
+実ファイルを [`deploy/systemd/`](deploy/systemd/) に置いてあります。
 
-この雛形は **repo bootstrap** です。  
-やっていないもの:
+- `station-converter-ja-api.service`
+- `station-converter-ja-ingest-n02.service`
+- `station-converter-ja-ingest-n02.timer`
+- `station-converter-ja.env.example`
+
+セットアップ手順と運用 runbook は [`docs/OPERATIONS.md`](docs/OPERATIONS.md) を参照してください。
+
+## Verify / Release
+
+静的チェックと DB 実経路の確認:
+
+```bash
+./scripts/verify_repo.sh
+./scripts/verify_ingest_export.sh postgres
+./scripts/verify_ingest_export.sh mysql
+```
+
+SQLite artifact を配布物として固める:
+
+```bash
+./scripts/release_sqlite_artifact.sh postgres
+```
+
+配布物は `artifacts/sqlite/` に出力されます。
+
+## Docs
+
+- [docs/OPERATIONS.md](docs/OPERATIONS.md)
+  - production runbook
+  - systemd 導線
+  - 更新時 / 障害時の扱い
+- [docs/RELEASE.md](docs/RELEASE.md)
+  - artifact / release 手順
+  - verify scripts
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+  - runtime 責務分離
+  - lock 方針
+- [docs/DEPLOY.md](docs/DEPLOY.md)
+  - self-hosted / cloud skeleton の位置づけ
+
+## データ方針
+
+- primary write DB は **PostgreSQL / MySQL**
+- **SQLite は read-only artifact**
+- source of truth は **`station_versions`**
+- `stations_latest` は view / projection
+- `latitude` / `longitude` は代表点
+- raw geometry は `geometry_geojson` に保持
+
+現状の crawler は、国土数値情報 N02 の公式 ZIP に同梱される UTF-8 `Station.geojson` を読み込み、
+`source_snapshots` / `station_versions` / `station_change_events` まで反映します。
+
+## いま含めているもの / まだ含めていないもの
+
+含めているもの:
+
+- N02 one-shot ingest
+- immutable version + change event 初期実装
+- PostgreSQL / MySQL / SQLite artifact 対応
+- example frontend
+- self-hosted systemd 導線
+
+まだ含めていないもの:
 
 - N05 overlay parser
-- SQLite export 本実装
-- Terraform の本番 resource 実装
 - production-ready OpenAPI
-
-ただし、v1 の土台として必要な **N02 station ingest と created / updated / removed の初期差分反映** は入っています。  
-つまり、**もう空箱ではない。ここから機能を増やしていける状態**です。
+- cloud resource の本実装

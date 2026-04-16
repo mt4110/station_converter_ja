@@ -1,0 +1,15 @@
+[Unit]
+Description=station_converter_ja N02 ingest
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/station_converter_ja
+EnvironmentFile=/etc/station_converter_ja/station.env
+Environment=JOB_LOCK_DIR=/run/station-converter-ja
+RuntimeDirectory=station-converter-ja
+ExecStart=/opt/station_converter_ja/target/release/station-ops job ingest-n02 $STATION_INGEST_ARGS
+
+[Install]
+WantedBy=multi-user.target

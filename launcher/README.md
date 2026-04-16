@@ -1,7 +1,11 @@
 # launcher
 
-Reserved for a future local launcher.
+This repository does not require a dedicated launcher for the supported path.
 
-`postal_converter_ja` has a launcher directory.
-This repo keeps the slot so the layout stays familiar.
-If you want to add a Rust launcher later, put it here.
+The public entry points are intentionally explicit:
+
+- `station-api`
+- `station-ops job ingest-n02`
+- `station-ops export-sqlite`
+
+The directory stays in place so the layout remains familiar with sibling repositories.

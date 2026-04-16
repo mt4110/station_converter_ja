@@ -1,0 +1,15 @@
+[Unit]
+Description=station_converter_ja API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/station_converter_ja
+EnvironmentFile=/etc/station_converter_ja/station.env
+ExecStart=/opt/station_converter_ja/target/release/station-api
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

@@ -11,4 +11,5 @@ sqlx.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+station-crawler = { path = "../crawler" }
 station-shared = { path = "../shared" }

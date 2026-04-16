@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use std::{env, fmt::Display, str::FromStr};
+use anyhow::{anyhow, Context, Result};
+use std::{env, fmt::Display, path::Path, str::FromStr};
 
 #[derive(Clone, Debug)]
 pub enum DatabaseType {
@@ -43,6 +43,7 @@ pub struct AppConfig {
     pub bind_addr: String,
     pub database_type: DatabaseType,
     pub database_url: String,
+    pub job_lock_dir: String,
     pub redis_url: Option<String>,
     pub ready_require_cache: bool,
     pub update_interval_seconds: u64,
@@ -52,6 +53,8 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env(service_name: &str) -> Result<Self> {
+        load_service_env(service_name)?;
+
         let database_type = env::var("DATABASE_TYPE")
             .unwrap_or_else(|_| "postgres".to_string())
             .parse::<DatabaseType>()?;
@@ -68,6 +71,7 @@ impl AppConfig {
         };
 
         let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3212".to_string());
+        let job_lock_dir = env::var("JOB_LOCK_DIR").unwrap_or_else(|_| "storage/locks".to_string());
         let redis_url = env::var("REDIS_URL").ok().filter(|v| !v.is_empty());
         let ready_require_cache = env::var("READY_REQUIRE_CACHE")
             .unwrap_or_else(|_| "false".to_string())
@@ -88,6 +92,7 @@ impl AppConfig {
             bind_addr,
             database_type,
             database_url,
+            job_lock_dir,
             redis_url,
             ready_require_cache,
             update_interval_seconds,
@@ -95,4 +100,26 @@ impl AppConfig {
             temp_asset_dir,
         })
     }
+}
+
+fn load_service_env(service_name: &str) -> Result<()> {
+    let env_path = match service_name {
+        "station-api" => Some("worker/api/.env"),
+        "station-crawler" => Some("worker/crawler/.env"),
+        "station-ops" => Some("worker/ops/.env"),
+        _ => None,
+    };
+
+    let Some(env_path) = env_path else {
+        return Ok(());
+    };
+
+    if !Path::new(env_path).exists() {
+        return Ok(());
+    }
+
+    dotenvy::from_path(env_path)
+        .with_context(|| format!("failed to load environment file {env_path}"))?;
+
+    Ok(())
 }
