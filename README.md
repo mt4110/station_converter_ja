@@ -151,12 +151,16 @@ SQLite artifact を配布物として固める:
 現状の crawler は、国土数値情報 N02 の公式 ZIP に同梱される UTF-8 `Station.geojson` を読み込み、
 `source_snapshots` / `station_versions` / `station_change_events` まで反映します。
 
+つまり、この repo はもう空箱ではありません。  
+N02 one-shot ingest、`created / updated / removed` の初期差分反映、SQLite artifact export、
+API、運用導線まで揃った v1 の実働基盤です。ここから overlay、OpenAPI、cloud deploy を積み増していく前提です。
+
 ## いま含めているもの / まだ含めていないもの
 
 含めているもの:
 
 - N02 one-shot ingest
-- immutable version + change event 初期実装
+- `created / updated / removed` の初期差分反映
 - PostgreSQL / MySQL / SQLite artifact 対応
 - example frontend
 - self-hosted systemd 導線

@@ -150,12 +150,17 @@ Outputs are written to `artifacts/sqlite/`.
 The current crawler reads the UTF-8 `Station.geojson` distributed inside the official N02 ZIP and writes through
 `source_snapshots`, `station_versions`, and `station_change_events`.
 
+In other words, this repository is no longer an empty scaffold.  
+It already has a working v1 foundation: N02 one-shot ingest, initial `created / updated / removed` diff handling,
+SQLite artifact export, the API surface, and the operational path. From here, the plan is to extend it with overlays,
+OpenAPI, and cloud deployment resources.
+
 ## Included vs Not Yet Included
 
 Included:
 
 - N02 one-shot ingest
-- immutable version + change event foundation
+- initial `created / updated / removed` diff handling
 - PostgreSQL / MySQL / SQLite artifact delivery
 - example frontend
 - self-hosted systemd path
