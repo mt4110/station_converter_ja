@@ -13,7 +13,7 @@ English README: [README_EN.md](README_EN.md)
 - 常駐させるもの: `station-api`
 - scheduler から叩くもの: `station-ops job ingest-n02`
 - artifact までまとめる補助導線: `station-ops job ingest-n02 --export-sqlite`
-- dev 補助モード: `station-crawler -- --loop`
+- dev 補助モード: `station-crawler --loop`
 
 本番では `station-crawler` を常駐させません。  
 本番 ingest の公式入口は **`station-ops job ingest-n02`** です。

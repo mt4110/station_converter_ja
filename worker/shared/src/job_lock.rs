@@ -11,6 +11,8 @@ use chrono::Utc;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
+const HOLDER_SUMMARY_MAX_BYTES: usize = 4096;
+
 #[derive(Debug)]
 pub struct JobLockBusy {
     lock_name: String,
@@ -110,9 +112,16 @@ pub async fn acquire_job_lock(
     let lock_name = lock_name.to_string();
     let service_name = service_name.to_string();
 
-    tokio::task::spawn_blocking(move || try_acquire_job_lock(lock_dir, &lock_name, &service_name))
-        .await
-        .context("job lock task panicked")?
+    match tokio::task::spawn_blocking(move || {
+        try_acquire_job_lock(lock_dir, &lock_name, &service_name)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(err) if err.is_panic() => Err(err).context("job lock task panicked")?,
+        Err(err) if err.is_cancelled() => Err(err).context("job lock task was cancelled")?,
+        Err(err) => Err(err).context("job lock task failed")?,
+    }
 }
 
 fn validate_lock_name(lock_name: &str) -> Result<()> {
@@ -133,21 +142,32 @@ fn validate_lock_name(lock_name: &str) -> Result<()> {
 fn read_holder_summary(file: &mut File) -> Result<Option<String>> {
     file.seek(SeekFrom::Start(0))?;
 
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
+    let mut reader = file.take((HOLDER_SUMMARY_MAX_BYTES + 1) as u64);
+    let mut contents = Vec::new();
+    reader.read_to_end(&mut contents)?;
+    let truncated = contents.len() > HOLDER_SUMMARY_MAX_BYTES;
 
+    if truncated {
+        contents.truncate(HOLDER_SUMMARY_MAX_BYTES);
+    }
+
+    let contents = String::from_utf8_lossy(&contents);
     let trimmed = contents.trim();
     if trimmed.is_empty() {
         return Ok(None);
     }
 
-    let summary = match serde_json::from_str::<LockHolder>(trimmed) {
+    let mut summary = match serde_json::from_str::<LockHolder>(trimmed) {
         Ok(holder) => format!(
             "held by {} (pid {}, acquired {})",
             holder.service_name, holder.pid, holder.acquired_at
         ),
         Err(_) => trimmed.to_string(),
     };
+
+    if truncated {
+        summary.push_str("... [truncated]");
+    }
 
     Ok(Some(summary))
 }
@@ -166,12 +186,15 @@ fn write_holder(file: &mut File, holder: &LockHolder) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        fs,
+        io::{Seek, SeekFrom, Write},
+    };
 
     use anyhow::Result;
 
-    use super::{try_acquire_job_lock, JobLockBusy};
+    use super::{read_holder_summary, try_acquire_job_lock, JobLockBusy, HOLDER_SUMMARY_MAX_BYTES};
 
     #[test]
     fn job_lock_blocks_second_holder_until_release() -> Result<()> {
@@ -201,5 +224,30 @@ mod tests {
             err.to_string().contains("invalid job lock name"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn read_holder_summary_truncates_large_lock_files() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let path = std::env::temp_dir().join(format!("station-job-lock-summary-{unique}.lock"));
+
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+        let oversized = "x".repeat(HOLDER_SUMMARY_MAX_BYTES + 32);
+        file.write_all(oversized.as_bytes())?;
+        file.seek(SeekFrom::Start(0))?;
+
+        let summary = read_holder_summary(&mut file)?.expect("summary should be present");
+        assert!(summary.ends_with("... [truncated]"));
+        assert!(summary.len() < oversized.len());
+
+        drop(file);
+        fs::remove_file(path)?;
+
+        Ok(())
     }
 }

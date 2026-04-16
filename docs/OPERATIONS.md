@@ -7,8 +7,8 @@
 - resident service: `station-api`
 - scheduled job: `station-ops job ingest-n02`
 - optional chained job: `station-ops job ingest-n02 --export-sqlite`
-- dev helper: `station-crawler -- --loop`
-- debug one-shot: `station-crawler -- --once`
+- dev helper: `station-crawler --loop`
+- debug one-shot: `station-crawler --once`
 
 本番では `station-crawler` を常駐 worker として使いません。
 
@@ -127,6 +127,8 @@ cargo run -p station-ops -- job ingest-n02 --export-sqlite
 - 既定値は `storage/locks`
 - `ingest-n02.lock` は `station-ops job ingest-n02`、`station-ops export-sqlite`、
   `station-crawler` が共用する整合性 lock
+- `export-sqlite.lock` は作らない。export は ingest と同じ lock を取り、
+  SQLite artifact が ingest と競合しないようにする
 - one-shot job で lock が取れない場合、その起動は失敗として終了
 - dev loop で lock が取れない場合、その周回は skip
 

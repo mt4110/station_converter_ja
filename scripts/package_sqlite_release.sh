@@ -6,7 +6,7 @@ mkdir -p artifacts/sqlite
 DB_PATH="${1:-storage/sqlite/stations.sqlite3}"
 
 if [[ ! -f "$DB_PATH" ]]; then
-  echo "SQLite DB not found: $DB_PATH"
+  echo "SQLite DB not found: $DB_PATH" >&2
   exit 1
 fi
 

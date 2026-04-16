@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Migrate => migrate(&config).await?,
         Commands::ExportSqlite => {
+            // Export shares the ingest lock so SQLite snapshots never race a live ingest.
             let _lock = acquire_job_lock(
                 &config.job_lock_dir,
                 N02_INGEST_LOCK_NAME,
@@ -109,23 +110,27 @@ async fn run_ingest_n02_job(config: &AppConfig, chain_export_sqlite: bool) -> Re
         bail!("--export-sqlite expects DATABASE_TYPE to be postgres or mysql");
     }
 
-    let pool = connect_any_pool(&config.database_url).await?;
-    let dialect = SqlDialect::from(&config.database_type);
     let _ingest_lock = acquire_job_lock(
         &config.job_lock_dir,
         N02_INGEST_LOCK_NAME,
         &config.service_name,
     )
     .await?;
+    let pool = connect_any_pool(&config.database_url).await?;
+    let dialect = SqlDialect::from(&config.database_type);
 
     let report = run_n02_ingest_cycle(config, &pool, dialect).await?;
+    let snapshot_id = report
+        .snapshot_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "none".to_string());
     info!(
         source_name = report.source_name,
         source_version = report.source_version.as_deref().unwrap_or("unknown"),
         source_url = %report.source_url,
         source_sha256 = %report.source_sha256,
         saved_to = %report.saved_to,
-        snapshot_id = report.snapshot_id.unwrap_or_default(),
+        snapshot_id,
         parsed_features = report.parsed_features,
         parsed_stations = report.parsed_stations,
         created = report.created,

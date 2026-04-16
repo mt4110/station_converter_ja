@@ -20,8 +20,21 @@ case "$SQLITE_URL" in
   sqlite://*)
     SQLITE_PATH="${SQLITE_URL#sqlite://}"
     ;;
+  sqlite:*)
+    SQLITE_PATH="${SQLITE_URL#sqlite:}"
+    ;;
   *)
     echo "unsupported SQLITE_DATABASE_URL: ${SQLITE_URL}" >&2
+    exit 1
+    ;;
+esac
+
+SQLITE_PATH="${SQLITE_PATH%%#*}"
+SQLITE_PATH="${SQLITE_PATH%%\?*}"
+
+case "$SQLITE_PATH" in
+  :memory:|"")
+    echo "SQLITE_DATABASE_URL must point to a file, not an in-memory database" >&2
     exit 1
     ;;
 esac

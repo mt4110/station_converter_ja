@@ -12,7 +12,7 @@ This repository keeps runtime roles intentionally separate.
 - long-running service: `station-api`
 - scheduled production job: `station-ops job ingest-n02`
 - optional chained artifact flow: `station-ops job ingest-n02 --export-sqlite`
-- dev helper loop: `station-crawler -- --loop`
+- dev helper loop: `station-crawler --loop`
 
 Production should not keep `station-crawler` running as a resident worker.  
 The official ingest entry point is **`station-ops job ingest-n02`**.

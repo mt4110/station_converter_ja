@@ -46,6 +46,12 @@ if [[ "$HEAD_COMMIT" != "$TAG_COMMIT" ]]; then
   exit 1
 fi
 
+if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules --; then
+  echo "working tree must be clean before publishing release assets" >&2
+  echo "commit or stash staged and unstaged changes, then retry" >&2
+  exit 1
+fi
+
 if ! gh auth status >/dev/null 2>&1; then
   echo "gh is not authenticated; run: gh auth login" >&2
   exit 1

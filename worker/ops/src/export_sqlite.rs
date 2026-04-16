@@ -13,7 +13,7 @@ use station_shared::{
     db::{connect_any_pool, SqlDialect},
 };
 use tokio::fs;
-use tracing::info;
+use tracing::{info, warn};
 
 static SQLITE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../storage/migrations/sqlite");
 
@@ -68,7 +68,7 @@ pub async fn export_sqlite(config: &AppConfig) -> Result<ExportReport> {
     sqlx::query("VACUUM").execute(&sqlite_pool).await?;
     sqlite_pool.close().await;
 
-    fs::rename(&temp_path, &output_path).await?;
+    install_output_file(&temp_path, &output_path).await?;
 
     let report = ExportReport {
         output_path,
@@ -132,6 +132,75 @@ fn temp_output_path(path: &Path) -> PathBuf {
         .unwrap_or_else(|| "stations.sqlite3".to_string());
 
     path.with_file_name(format!("{file_name}.tmp"))
+}
+
+fn backup_output_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .map(|file_name| file_name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "stations.sqlite3".to_string());
+
+    path.with_file_name(format!("{file_name}.bak"))
+}
+
+async fn install_output_file(temp_path: &Path, output_path: &Path) -> Result<()> {
+    let backup_path = backup_output_path(output_path);
+
+    if fs::try_exists(&backup_path).await? {
+        fs::remove_file(&backup_path).await.with_context(|| {
+            format!(
+                "failed to clear stale sqlite backup {}",
+                backup_path.display()
+            )
+        })?;
+    }
+
+    if !fs::try_exists(output_path).await? {
+        fs::rename(temp_path, output_path).await.with_context(|| {
+            format!("failed to place sqlite artifact {}", output_path.display())
+        })?;
+        return Ok(());
+    }
+
+    fs::rename(output_path, &backup_path)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to move existing sqlite artifact {} to backup {}",
+                output_path.display(),
+                backup_path.display()
+            )
+        })?;
+
+    match fs::rename(temp_path, output_path).await {
+        Ok(()) => {
+            if let Err(err) = fs::remove_file(&backup_path).await {
+                warn!(
+                    backup_path = %backup_path.display(),
+                    error = %err,
+                    "failed to remove sqlite artifact backup"
+                );
+            }
+
+            Ok(())
+        }
+        Err(err) => {
+            fs::rename(&backup_path, output_path).await.with_context(|| {
+                format!(
+                    "failed to replace sqlite artifact {}; original artifact could not be restored from {}",
+                    output_path.display(),
+                    backup_path.display()
+                )
+            })?;
+
+            Err(err).with_context(|| {
+                format!(
+                    "failed to replace sqlite artifact {}",
+                    output_path.display()
+                )
+            })
+        }
+    }
 }
 
 fn text_select(dialect: SqlDialect, column: &str) -> String {
@@ -410,6 +479,8 @@ async fn copy_station_change_events(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
 
     #[test]
@@ -462,6 +533,12 @@ mod tests {
     }
 
     #[test]
+    fn creates_backup_path_next_to_output() {
+        let path = backup_output_path(Path::new("storage/sqlite/stations.sqlite3"));
+        assert_eq!(path, PathBuf::from("storage/sqlite/stations.sqlite3.bak"));
+    }
+
+    #[test]
     fn mysql_text_select_casts_to_char() {
         assert_eq!(
             text_select(SqlDialect::Mysql, "detail_json"),
@@ -480,5 +557,29 @@ mod tests {
             .transpose()
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn install_output_file_replaces_existing_output() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let dir = std::env::temp_dir().join(format!("station-export-install-{unique}"));
+        fs::create_dir_all(&dir).await?;
+
+        let output_path = dir.join("stations.sqlite3");
+        let temp_path = dir.join("stations.sqlite3.tmp");
+        let backup_path = dir.join("stations.sqlite3.bak");
+
+        fs::write(&output_path, b"old").await?;
+        fs::write(&temp_path, b"new").await?;
+
+        install_output_file(&temp_path, &output_path).await?;
+
+        assert_eq!(fs::read(&output_path).await?, b"new");
+        assert!(!fs::try_exists(&temp_path).await?);
+        assert!(!fs::try_exists(&backup_path).await?);
+
+        fs::remove_dir_all(dir).await?;
+
+        Ok(())
     }
 }

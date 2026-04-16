@@ -41,7 +41,7 @@ station_identities -> station_versions
 
 - production 標準運用は `station-ops job ingest-n02`
 - production scheduler は external scheduler / systemd timer を前提
-- `station-crawler -- --loop` は dev 補助モード
+- `station-crawler --loop` は dev 補助モード
 - lock は `JOB_LOCK_DIR` 配下の file lock で二重実行を防ぐ
 - repo root から起動する Rust コマンドは `worker/*/.env` を自動読込する
 
