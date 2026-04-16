@@ -160,7 +160,7 @@ fn find_env_path(env_path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     for root in roots {
         for ancestor in root.ancestors() {
             let candidate = ancestor.join(env_path);
-            if candidate.exists() {
+            if candidate.is_file() {
                 return Some(candidate);
             }
         }
@@ -184,7 +184,7 @@ mod tests {
         fs::create_dir_all(&nested)?;
         fs::write(nested.join(".env"), "DATABASE_TYPE=postgres\n")?;
 
-        let resolved = find_env_path(Path::new("worker/ops/.env"), &[nested.clone()])
+        let resolved = find_env_path(Path::new("worker/ops/.env"), std::slice::from_ref(&nested))
             .expect("env file should resolve from ancestor");
 
         assert_eq!(resolved, nested.join(".env"));
@@ -216,6 +216,24 @@ mod tests {
             .expect("env file should resolve from executable root first");
 
         assert_eq!(resolved, exe_env);
+
+        fs::remove_dir_all(base)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn ignores_directory_named_env() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let base = std::env::temp_dir().join(format!("station-config-dir-env-{unique}"));
+        let dir_env = base.join("worker/ops/.env");
+        fs::create_dir_all(&dir_env)?;
+
+        let resolved = find_env_path(Path::new("worker/ops/.env"), std::slice::from_ref(&base));
+        assert!(
+            resolved.is_none(),
+            "directory should not be treated as env file"
+        );
 
         fs::remove_dir_all(base)?;
 
