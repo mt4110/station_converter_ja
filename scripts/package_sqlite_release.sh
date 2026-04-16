@@ -20,7 +20,7 @@ if command -v sha256sum >/dev/null 2>&1; then
 elif command -v shasum >/dev/null 2>&1; then
   CHECKSUM_CMD=(shasum -a 256)
 else
-  echo "sha256 checksum command not found"
+  echo "sha256 checksum command not found" >&2
   exit 1
 fi
 
