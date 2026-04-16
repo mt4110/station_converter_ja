@@ -1,6 +1,7 @@
 # station_converter_ja
 
-Rust-based Japanese Station Converter & API for automated nationwide station updates, diff tracking, and SQLite artifact delivery.
+High-performance converter and API for nationwide station data with automated updates, diff tracking, and SQLite artifact delivery.  
+It ingests MLIT N02 data, keeps version and change-event history, and serves the dataset through the API and distributable SQLite artifacts.
 
 Japanese README: [README.md](README.md)
 

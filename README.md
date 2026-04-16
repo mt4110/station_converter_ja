@@ -1,7 +1,8 @@
 # station_converter_ja
 
-全国駅データを自動更新・差分管理する Rust 製 Station Converter & API です。  
-PostgreSQL / MySQL を primary write DB にし、SQLite を read-only artifact として配布できます。
+全国駅データを自動更新・差分管理する高性能な変換ツール＆APIです。  
+PostgreSQL / MySQL を primary write DB にし、SQLite を read-only artifact として配布できます。  
+国土数値情報 N02 を取り込み、差分を version / change event として保持しつつ、API と SQLite artifact を提供します。
 
 English README: [README_EN.md](README_EN.md)
 
