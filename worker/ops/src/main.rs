@@ -12,7 +12,7 @@ use station_crawler::{run_n02_ingest_cycle, N02_INGEST_LOCK_NAME};
 use station_shared::config::{AppConfig, DatabaseType};
 use station_shared::{
     db::{connect_any_pool, SqlDialect},
-    job_lock::try_acquire_job_lock,
+    job_lock::acquire_job_lock,
 };
 use std::str::FromStr;
 use tracing::info;
@@ -55,11 +55,12 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Migrate => migrate(&config).await?,
         Commands::ExportSqlite => {
-            let _lock = try_acquire_job_lock(
+            let _lock = acquire_job_lock(
                 &config.job_lock_dir,
                 N02_INGEST_LOCK_NAME,
                 &config.service_name,
-            )?;
+            )
+            .await?;
             let report = export_sqlite::export_sqlite(&config).await?;
             info!(
                 output_path = %report.output_path.display(),
@@ -110,11 +111,12 @@ async fn run_ingest_n02_job(config: &AppConfig, chain_export_sqlite: bool) -> Re
 
     let pool = connect_any_pool(&config.database_url).await?;
     let dialect = SqlDialect::from(&config.database_type);
-    let _ingest_lock = try_acquire_job_lock(
+    let _ingest_lock = acquire_job_lock(
         &config.job_lock_dir,
         N02_INGEST_LOCK_NAME,
         &config.service_name,
-    )?;
+    )
+    .await?;
 
     let report = run_n02_ingest_cycle(config, &pool, dialect).await?;
     info!(

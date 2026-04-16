@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
 use futures_util::TryStreamExt;
@@ -95,10 +96,33 @@ fn sqlite_database_url() -> String {
 }
 
 fn sqlite_url_to_path(sqlite_url: &str) -> Result<PathBuf> {
-    sqlite_url
-        .strip_prefix("sqlite://")
-        .map(PathBuf::from)
-        .with_context(|| format!("unsupported SQLITE_DATABASE_URL: {sqlite_url}"))
+    if sqlite_url_requests_memory(sqlite_url) {
+        bail!("SQLITE_DATABASE_URL must point to a file, not an in-memory database");
+    }
+
+    let options = SqliteConnectOptions::from_str(sqlite_url)
+        .with_context(|| format!("unsupported SQLITE_DATABASE_URL: {sqlite_url}"))?;
+
+    Ok(options.get_filename().to_path_buf())
+}
+
+fn sqlite_url_requests_memory(sqlite_url: &str) -> bool {
+    let trimmed = sqlite_url
+        .trim_start_matches("sqlite://")
+        .trim_start_matches("sqlite:");
+    let mut parts = trimmed.splitn(2, '?');
+    let database = parts.next().unwrap_or_default();
+
+    if database == ":memory:" {
+        return true;
+    }
+
+    parts.next().is_some_and(|query| {
+        query.split('&').any(|param| {
+            let mut pair = param.splitn(2, '=');
+            matches!((pair.next(), pair.next()), (Some("mode"), Some("memory")))
+        })
+    })
 }
 
 fn temp_output_path(path: &Path) -> PathBuf {
@@ -404,6 +428,31 @@ mod tests {
             path,
             PathBuf::from("/opt/station_converter_ja/storage/sqlite/stations.sqlite3")
         );
+    }
+
+    #[test]
+    fn ignores_sqlite_url_query_when_deriving_output_path() {
+        let path = sqlite_url_to_path(
+            "sqlite:///opt/station_converter_ja/storage/sqlite/stations.sqlite3?mode=rwc",
+        )
+        .unwrap();
+        assert_eq!(
+            path,
+            PathBuf::from("/opt/station_converter_ja/storage/sqlite/stations.sqlite3")
+        );
+    }
+
+    #[test]
+    fn rejects_in_memory_sqlite_url() {
+        let err = sqlite_url_to_path("sqlite::memory:").expect_err("in-memory URL should fail");
+        assert!(err.to_string().contains("must point to a file"));
+    }
+
+    #[test]
+    fn rejects_memory_mode_sqlite_url() {
+        let err = sqlite_url_to_path("sqlite://artifact.db?mode=memory")
+            .expect_err("memory mode URL should fail");
+        assert!(err.to_string().contains("must point to a file"));
     }
 
     #[test]

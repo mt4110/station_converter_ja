@@ -101,6 +101,20 @@ pub fn try_acquire_job_lock(
     Ok(JobLockGuard { file })
 }
 
+pub async fn acquire_job_lock(
+    lock_dir: impl AsRef<Path>,
+    lock_name: &str,
+    service_name: &str,
+) -> Result<JobLockGuard> {
+    let lock_dir = lock_dir.as_ref().to_path_buf();
+    let lock_name = lock_name.to_string();
+    let service_name = service_name.to_string();
+
+    tokio::task::spawn_blocking(move || try_acquire_job_lock(lock_dir, &lock_name, &service_name))
+        .await
+        .context("job lock task panicked")?
+}
+
 fn validate_lock_name(lock_name: &str) -> Result<()> {
     if lock_name.is_empty() {
         bail!("job lock name must not be empty");

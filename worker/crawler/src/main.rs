@@ -4,7 +4,7 @@ use station_crawler::{run_n02_ingest_cycle, N02_INGEST_LOCK_NAME};
 use station_shared::{
     config::AppConfig,
     db::{connect_any_pool, SqlDialect},
-    job_lock::{try_acquire_job_lock, JobLockBusy},
+    job_lock::{acquire_job_lock, JobLockBusy},
 };
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
@@ -57,11 +57,12 @@ async fn run_once(
     pool: &sqlx::AnyPool,
     dialect: SqlDialect,
 ) -> Result<station_crawler::n02::IngestReport> {
-    let _lock = try_acquire_job_lock(
+    let _lock = acquire_job_lock(
         &config.job_lock_dir,
         N02_INGEST_LOCK_NAME,
         &config.service_name,
-    )?;
+    )
+    .await?;
 
     run_n02_ingest_cycle(config, pool, dialect).await
 }

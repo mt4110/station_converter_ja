@@ -9,7 +9,6 @@ WorkingDirectory=/opt/station_converter_ja
 User=station-converter-ja
 Group=station-converter-ja
 EnvironmentFile=/etc/station_converter_ja/station.env
-Environment=JOB_LOCK_DIR=/run/station-converter-ja
 RuntimeDirectory=station-converter-ja
 ExecStart=/opt/station_converter_ja/target/release/station-ops job ingest-n02 $STATION_INGEST_ARGS
 NoNewPrivileges=yes
