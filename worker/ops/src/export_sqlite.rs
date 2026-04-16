@@ -168,6 +168,13 @@ fn row_optional_string(row: &AnyRow, column: &str) -> Result<Option<String>> {
     }
 }
 
+fn integer_select(dialect: SqlDialect, column: &str) -> String {
+    match dialect {
+        SqlDialect::Mysql => format!("CAST({column} AS SIGNED) AS {column}"),
+        SqlDialect::Postgres | SqlDialect::Sqlite => format!("{column} AS {column}"),
+    }
+}
+
 async fn copy_source_snapshots(
     source_pool: &sqlx::AnyPool,
     source_dialect: SqlDialect,
@@ -175,7 +182,7 @@ async fn copy_source_snapshots(
 ) -> Result<usize> {
     let query = format!(
         "SELECT
-           id,
+           {},
            {},
            {},
            {},
@@ -184,6 +191,7 @@ async fn copy_source_snapshots(
            {} AS downloaded_at
          FROM source_snapshots
          ORDER BY id",
+        integer_select(source_dialect, "id"),
         text_select(source_dialect, "source_name"),
         text_select(source_dialect, "source_kind"),
         text_select(source_dialect, "source_version"),
@@ -230,12 +238,13 @@ async fn copy_station_identities(
 ) -> Result<usize> {
     let query = format!(
         "SELECT
-           id,
+           {},
            {},
            {},
            {} AS created_at
          FROM station_identities
          ORDER BY id",
+        integer_select(source_dialect, "id"),
         text_select(source_dialect, "station_uid"),
         text_select(source_dialect, "canonical_name"),
         source_dialect.text_cast("created_at")
@@ -269,9 +278,9 @@ async fn copy_station_identities(
 fn station_versions_select_query(source_dialect: SqlDialect) -> String {
     format!(
         "SELECT
-           id,
            {},
-           snapshot_id,
+           {},
+           {},
            {},
            {},
            {},
@@ -288,7 +297,9 @@ fn station_versions_select_query(source_dialect: SqlDialect) -> String {
            {}
          FROM station_versions
          ORDER BY id",
+        integer_select(source_dialect, "id"),
         text_select(source_dialect, "station_uid"),
+        integer_select(source_dialect, "snapshot_id"),
         text_select(source_dialect, "source_station_code"),
         text_select(source_dialect, "source_group_code"),
         text_select(source_dialect, "station_name"),
@@ -369,18 +380,22 @@ async fn copy_station_change_events(
 ) -> Result<usize> {
     let query = format!(
         "SELECT
-           id,
-           snapshot_id,
            {},
            {},
-           before_version_id,
-           after_version_id,
+           {},
+           {},
+           {},
+           {},
            {},
            {} AS created_at
          FROM station_change_events
          ORDER BY id",
+        integer_select(source_dialect, "id"),
+        integer_select(source_dialect, "snapshot_id"),
         text_select(source_dialect, "station_uid"),
         text_select(source_dialect, "change_kind"),
+        integer_select(source_dialect, "before_version_id"),
+        integer_select(source_dialect, "after_version_id"),
         text_select(source_dialect, "detail_json"),
         source_dialect.text_cast("created_at")
     );
@@ -478,6 +493,14 @@ mod tests {
         assert_eq!(
             text_select(SqlDialect::Mysql, "detail_json"),
             "CAST(detail_json AS CHAR) AS detail_json"
+        );
+    }
+
+    #[test]
+    fn mysql_integer_select_casts_to_signed() {
+        assert_eq!(
+            integer_select(SqlDialect::Mysql, "snapshot_id"),
+            "CAST(snapshot_id AS SIGNED) AS snapshot_id"
         );
     }
 
