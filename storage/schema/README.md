@@ -11,6 +11,9 @@
 - `station_change_events`
   - add / rename / relocate / regroup / close などの差分イベント
 
+テーブル構造の見取り図、軽い sample dump、example query は
+[`docs/DATABASE.md`](../../docs/DATABASE.md) を参照。
+
 ## Latitude / Longitude
 
 国土数値情報 N02 は駅 geometry を線として保持している年次があるため、  

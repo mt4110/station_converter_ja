@@ -131,6 +131,10 @@ SQLite artifact を配布物として固める:
   - production runbook
   - systemd 導線
   - 更新時 / 障害時の扱い
+- [docs/DATABASE.md](docs/DATABASE.md)
+  - table 構造
+  - 軽い sample dump
+  - example SQL
 - [docs/RELEASE.md](docs/RELEASE.md)
   - artifact / release 手順
   - verify scripts

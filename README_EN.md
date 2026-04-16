@@ -130,6 +130,10 @@ Outputs are written to `artifacts/sqlite/`.
   - production runbook
   - systemd path
   - update and failure handling
+- [docs/DATABASE.md](docs/DATABASE.md)
+  - table layout
+  - lightweight sample dump
+  - example SQL
 - [docs/RELEASE.md](docs/RELEASE.md)
   - artifact / release flow
   - verify scripts
