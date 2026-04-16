@@ -24,8 +24,9 @@ English README: [README_EN.md](README_EN.md)
 
 - PostgreSQL で始める: `postgres`
 - MySQL で始める: `mysql`
+- SQLite で軽く試す: `sqlite`（ローカル確認向け。Docker は起動しません）
 
-以下は PostgreSQL 例です。
+本番の primary write DB は PostgreSQL / MySQL を前提にします。以下は PostgreSQL 例です。
 
 ### 2. env を作って DB を起動する
 
@@ -105,6 +106,12 @@ npm run dev
 - `station-converter-ja-ingest-n02.timer`
 - `station-converter-ja.env.example`
 
+`/opt/station_converter_ja/target/release/` に置く binary は次で揃えられます。
+
+```bash
+sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-converter-ja station-converter-ja
+```
+
 セットアップ手順と運用 runbook は [`docs/OPERATIONS.md`](docs/OPERATIONS.md) を参照してください。
 
 ## Verify / Release
@@ -115,12 +122,19 @@ npm run dev
 ./scripts/verify_repo.sh
 ./scripts/verify_ingest_export.sh postgres
 ./scripts/verify_ingest_export.sh mysql
+cd frontend && npm ci && npm run build
 ```
 
 SQLite artifact を配布物として固める:
 
 ```bash
 ./scripts/release_sqlite_artifact.sh postgres
+```
+
+GitHub Release までまとめて公開する:
+
+```bash
+./scripts/publish_sqlite_release.sh postgres v0.1.1
 ```
 
 配布物は `artifacts/sqlite/` に出力されます。

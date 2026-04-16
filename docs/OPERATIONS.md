@@ -56,6 +56,9 @@ cargo run -p station-api
 ### Install
 
 ```bash
+sudo useradd --system --user-group --home /opt/station_converter_ja --shell /usr/sbin/nologin station-converter-ja
+sudo install -d -o station-converter-ja -g station-converter-ja /opt/station_converter_ja
+sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-converter-ja station-converter-ja
 sudo install -d /etc/station_converter_ja
 sudo cp deploy/systemd/station-converter-ja.env.example /etc/station_converter_ja/station.env
 sudo cp deploy/systemd/station-converter-ja-api.service /etc/systemd/system/
@@ -73,6 +76,16 @@ sudo systemctl daemon-reload
 
 ingest のたびに SQLite export まで繋げたい場合は、
 `STATION_INGEST_ARGS=--export-sqlite` を設定します。
+
+`/opt/station_converter_ja` 配下の binary, `storage/sqlite/`, `worker/crawler/temp_assets/`
+は `station-converter-ja` ユーザーから読める/書ける権限にしておきます。
+
+初回 migrate と初回 ingest は、service に入る前に install 済み binary で通しておくと迷いません。
+
+```bash
+sudo -u station-converter-ja /opt/station_converter_ja/target/release/station-ops migrate
+sudo -u station-converter-ja /opt/station_converter_ja/target/release/station-ops job ingest-n02
+```
 
 ### Enable
 
@@ -112,8 +125,8 @@ cargo run -p station-ops -- job ingest-n02 --export-sqlite
 
 - lock file は `JOB_LOCK_DIR` 配下に置く
 - 既定値は `storage/locks`
-- `ingest-n02.lock` は `station-ops job ingest-n02` と `station-crawler` が共用
-- `export-sqlite.lock` は `station-ops export-sqlite` と `--export-sqlite` chain が共用
+- `ingest-n02.lock` は `station-ops job ingest-n02`、`station-ops export-sqlite`、
+  `station-crawler` が共用する整合性 lock
 - one-shot job で lock が取れない場合、その起動は失敗として終了
 - dev loop で lock が取れない場合、その周回は skip
 
@@ -133,26 +146,36 @@ MySQL を primary write にしている場合:
 ./scripts/release_sqlite_artifact.sh mysql
 ```
 
+GitHub Release まで載せる場合:
+
+```bash
+./scripts/publish_sqlite_release.sh postgres v0.1.1
+```
+
 ### Verify before updating
 
 ```bash
 ./scripts/verify_repo.sh
 ./scripts/verify_ingest_export.sh postgres
 ./scripts/verify_ingest_export.sh mysql
+cd frontend && npm ci && npm run build
 ```
 
 ### Update procedure
 
 1. 新しいコードを配置する
-2. `cargo run -p station-ops -- migrate`
-3. `station-api` を再起動する
-4. 必要なら `station-ops job ingest-n02 --export-sqlite` を手動実行する
-5. scheduler を通常運転に戻す
+2. `sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-converter-ja station-converter-ja`
+3. `sudo -u station-converter-ja /opt/station_converter_ja/target/release/station-ops migrate`
+4. `station-api` を再起動する
+5. 必要なら `sudo -u station-converter-ja /opt/station_converter_ja/target/release/station-ops job ingest-n02 --export-sqlite` を手動実行する
+6. scheduler を通常運転に戻す
 
 systemd なら必要に応じて timer を一時停止してから更新します。
 
 ```bash
 sudo systemctl stop station-converter-ja-ingest-n02.timer
+sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-converter-ja station-converter-ja
+sudo -u station-converter-ja /opt/station_converter_ja/target/release/station-ops migrate
 sudo systemctl restart station-converter-ja-api.service
 sudo systemctl start station-converter-ja-ingest-n02.service
 sudo systemctl start station-converter-ja-ingest-n02.timer

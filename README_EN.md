@@ -23,8 +23,9 @@ The official ingest entry point is **`station-ops job ingest-n02`**.
 
 - `postgres`
 - `mysql`
+- `sqlite` for a lightweight local pass (Docker is skipped)
 
-The example below uses PostgreSQL.
+Production primary write DBs should stay on PostgreSQL / MySQL. The example below uses PostgreSQL.
 
 ### 2. Create env files and start the database
 
@@ -104,6 +105,12 @@ Ready-to-use reference files live in [`deploy/systemd/`](deploy/systemd/).
 - `station-converter-ja-ingest-n02.timer`
 - `station-converter-ja.env.example`
 
+You can build and stage the binaries expected under `/opt/station_converter_ja/target/release/` with:
+
+```bash
+sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-converter-ja station-converter-ja
+```
+
 See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for install and runbook details.
 
 ## Verify / Release
@@ -114,12 +121,19 @@ Static verification plus database-backed flow checks:
 ./scripts/verify_repo.sh
 ./scripts/verify_ingest_export.sh postgres
 ./scripts/verify_ingest_export.sh mysql
+cd frontend && npm ci && npm run build
 ```
 
 Build a distributable SQLite bundle:
 
 ```bash
 ./scripts/release_sqlite_artifact.sh postgres
+```
+
+Publish the SQLite bundle to a GitHub Release:
+
+```bash
+./scripts/publish_sqlite_release.sh postgres v0.1.1
 ```
 
 Outputs are written to `artifacts/sqlite/`.
