@@ -46,9 +46,9 @@ if [[ "$HEAD_COMMIT" != "$TAG_COMMIT" ]]; then
   exit 1
 fi
 
-if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules --; then
+if [[ -n "$(git status --porcelain --untracked-files=normal --ignore-submodules=all)" ]]; then
   echo "working tree must be clean before publishing release assets" >&2
-  echo "commit or stash staged and unstaged changes, then retry" >&2
+  echo "commit, stash, or remove staged, unstaged, and untracked changes, then retry" >&2
   exit 1
 fi
 
