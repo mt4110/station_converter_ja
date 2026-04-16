@@ -13,7 +13,7 @@ use station_shared::{
     db::{connect_any_pool, SqlDialect},
 };
 use tokio::fs;
-use tracing::{info, warn};
+use tracing::info;
 
 static SQLITE_MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../storage/migrations/sqlite");
 
@@ -134,73 +134,10 @@ fn temp_output_path(path: &Path) -> PathBuf {
     path.with_file_name(format!("{file_name}.tmp"))
 }
 
-fn backup_output_path(path: &Path) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .map(|file_name| file_name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "stations.sqlite3".to_string());
-
-    path.with_file_name(format!("{file_name}.bak"))
-}
-
 async fn install_output_file(temp_path: &Path, output_path: &Path) -> Result<()> {
-    let backup_path = backup_output_path(output_path);
-
-    if fs::try_exists(&backup_path).await? {
-        fs::remove_file(&backup_path).await.with_context(|| {
-            format!(
-                "failed to clear stale sqlite backup {}",
-                backup_path.display()
-            )
-        })?;
-    }
-
-    if !fs::try_exists(output_path).await? {
-        fs::rename(temp_path, output_path).await.with_context(|| {
-            format!("failed to place sqlite artifact {}", output_path.display())
-        })?;
-        return Ok(());
-    }
-
-    fs::rename(output_path, &backup_path)
+    fs::rename(temp_path, output_path)
         .await
-        .with_context(|| {
-            format!(
-                "failed to move existing sqlite artifact {} to backup {}",
-                output_path.display(),
-                backup_path.display()
-            )
-        })?;
-
-    match fs::rename(temp_path, output_path).await {
-        Ok(()) => {
-            if let Err(err) = fs::remove_file(&backup_path).await {
-                warn!(
-                    backup_path = %backup_path.display(),
-                    error = %err,
-                    "failed to remove sqlite artifact backup"
-                );
-            }
-
-            Ok(())
-        }
-        Err(err) => {
-            fs::rename(&backup_path, output_path).await.with_context(|| {
-                format!(
-                    "failed to replace sqlite artifact {}; original artifact could not be restored from {}",
-                    output_path.display(),
-                    backup_path.display()
-                )
-            })?;
-
-            Err(err).with_context(|| {
-                format!(
-                    "failed to replace sqlite artifact {}",
-                    output_path.display()
-                )
-            })
-        }
-    }
+        .with_context(|| format!("failed to place sqlite artifact {}", output_path.display()))
 }
 
 fn text_select(dialect: SqlDialect, column: &str) -> String {
@@ -530,12 +467,6 @@ mod tests {
     fn creates_temp_path_next_to_output() {
         let path = temp_output_path(Path::new("storage/sqlite/stations.sqlite3"));
         assert_eq!(path, PathBuf::from("storage/sqlite/stations.sqlite3.tmp"));
-    }
-
-    #[test]
-    fn creates_backup_path_next_to_output() {
-        let path = backup_output_path(Path::new("storage/sqlite/stations.sqlite3"));
-        assert_eq!(path, PathBuf::from("storage/sqlite/stations.sqlite3.bak"));
     }
 
     #[test]

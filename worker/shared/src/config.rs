@@ -1,5 +1,10 @@
 use anyhow::{anyhow, Context, Result};
-use std::{env, fmt::Display, path::Path, str::FromStr};
+use std::{
+    env,
+    fmt::Display,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 #[derive(Clone, Debug)]
 pub enum DatabaseType {
@@ -104,9 +109,9 @@ impl AppConfig {
 
 fn load_service_env(service_name: &str) -> Result<()> {
     let env_path = match service_name {
-        "station-api" => Some("worker/api/.env"),
-        "station-crawler" => Some("worker/crawler/.env"),
-        "station-ops" => Some("worker/ops/.env"),
+        "station-api" => Some(Path::new("worker/api/.env")),
+        "station-crawler" => Some(Path::new("worker/crawler/.env")),
+        "station-ops" => Some(Path::new("worker/ops/.env")),
         _ => None,
     };
 
@@ -114,12 +119,67 @@ fn load_service_env(service_name: &str) -> Result<()> {
         return Ok(());
     };
 
-    if !Path::new(env_path).exists() {
+    let Some(env_path) = resolve_env_path(env_path) else {
         return Ok(());
-    }
+    };
 
-    dotenvy::from_path(env_path)
-        .with_context(|| format!("failed to load environment file {env_path}"))?;
+    dotenvy::from_path(&env_path)
+        .with_context(|| format!("failed to load environment file {}", env_path.display()))?;
 
     Ok(())
+}
+
+fn resolve_env_path(env_path: &Path) -> Option<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Ok(current_dir) = env::current_dir() {
+        roots.push(current_dir);
+    }
+
+    if let Ok(current_exe) = env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+
+    find_env_path(env_path, &roots)
+}
+
+fn find_env_path(env_path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    for root in roots {
+        for ancestor in root.ancestors() {
+            let candidate = ancestor.join(env_path);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn finds_env_file_from_ancestor_root() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let root = std::env::temp_dir().join(format!("station-config-env-{unique}"));
+        let nested = root.join("worker/ops");
+        fs::create_dir_all(&nested)?;
+        fs::write(nested.join(".env"), "DATABASE_TYPE=postgres\n")?;
+
+        let resolved = find_env_path(Path::new("worker/ops/.env"), &[nested.clone()])
+            .expect("env file should resolve from ancestor");
+
+        assert_eq!(resolved, nested.join(".env"));
+
+        fs::remove_dir_all(root)?;
+
+        Ok(())
+    }
 }

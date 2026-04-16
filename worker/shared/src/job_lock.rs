@@ -118,9 +118,9 @@ pub async fn acquire_job_lock(
     .await
     {
         Ok(result) => result,
-        Err(err) if err.is_panic() => Err(err).context("job lock task panicked")?,
-        Err(err) if err.is_cancelled() => Err(err).context("job lock task was cancelled")?,
-        Err(err) => Err(err).context("job lock task failed")?,
+        Err(err) if err.is_panic() => Err(err).context("job lock task panicked"),
+        Err(err) if err.is_cancelled() => Err(err).context("job lock task was cancelled"),
+        Err(err) => Err(err).context("job lock task failed"),
     }
 }
 
