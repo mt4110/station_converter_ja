@@ -1,0 +1,8 @@
+target
+frontend/node_modules
+frontend/.next
+.git
+.gitignore
+docs/*_LOCAL.md
+artifacts/sqlite/*
+storage/sqlite/*

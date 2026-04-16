@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  mysql:
+    volumes:
+      - ./.docker-data/mysql:/var/lib/mysql
+  postgres:
+    volumes:
+      - ./.docker-data/postgres:/var/lib/postgresql/data
+  redis:
+    volumes:
+      - ./.docker-data/redis:/data

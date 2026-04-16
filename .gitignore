@@ -1,0 +1,50 @@
+# operations / private notes
+OPERATION_MANUAL.md
+docs/*_LOCAL.md
+
+# rust
+target/
+
+# frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# local env
+**/.env
+frontend/.env.local
+
+# crawler temp assets
+worker/crawler/temp_assets/*.zip
+worker/crawler/temp_assets/*.csv
+worker/crawler/temp_assets/*.json
+worker/crawler/temp_assets/*.geojson
+worker/crawler/temp_assets/*.gml
+!worker/crawler/temp_assets/.gitkeep
+
+# sqlite artifacts
+artifacts/sqlite/*
+!artifacts/sqlite/.gitkeep
+storage/sqlite/*
+!storage/sqlite/.gitkeep
+
+# terraform
+infra/terraform/**/.terraform/
+infra/terraform/**/*.tfstate
+infra/terraform/**/*.tfstate.*
+infra/terraform/**/tfplan
+infra/terraform/**/crash.log
+
+# nix / direnv
+result
+.direnv/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# editor / recovery
+.vscode/
+.idea/
+.git.broken_*
+.trunk/

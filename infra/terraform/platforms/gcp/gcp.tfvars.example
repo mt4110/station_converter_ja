@@ -1,0 +1,4 @@
+project_id = "your-gcp-project"
+region = "asia-northeast1"
+environment = "dev"
+image = "ghcr.io/mt4110/station_converter_ja/api:dev"
