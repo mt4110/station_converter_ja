@@ -175,3 +175,8 @@ API、運用導線まで揃った v1 の実働基盤です。ここから overla
 - N05 overlay parser
 - production-ready OpenAPI
 - cloud resource の本実装
+
+## License
+
+この repo は **MIT OR Apache-2.0** の dual license です。  
+利用者は [`LICENSE-MIT`](LICENSE-MIT) または [`LICENSE-APACHE`](LICENSE-APACHE) を選べます。

@@ -175,3 +175,8 @@ Not yet included:
 - N05 overlay parser
 - production-ready OpenAPI
 - full cloud resource implementations
+
+## License
+
+This repository is dual-licensed under **MIT OR Apache-2.0**.  
+You may choose either [`LICENSE-MIT`](LICENSE-MIT) or [`LICENSE-APACHE`](LICENSE-APACHE).
