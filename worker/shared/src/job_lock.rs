@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,8 @@ pub fn try_acquire_job_lock(
     lock_name: &str,
     service_name: &str,
 ) -> Result<JobLockGuard> {
+    validate_lock_name(lock_name)?;
+
     let lock_dir = lock_dir.as_ref();
     fs::create_dir_all(lock_dir)
         .with_context(|| format!("failed to create lock directory {}", lock_dir.display()))?;
@@ -97,6 +99,21 @@ pub fn try_acquire_job_lock(
     )?;
 
     Ok(JobLockGuard { file })
+}
+
+fn validate_lock_name(lock_name: &str) -> Result<()> {
+    if lock_name.is_empty() {
+        bail!("job lock name must not be empty");
+    }
+
+    if !lock_name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        bail!("invalid job lock name '{lock_name}': use only ASCII letters, digits, '-' or '_'");
+    }
+
+    Ok(())
 }
 
 fn read_holder_summary(file: &mut File) -> Result<Option<String>> {
@@ -159,5 +176,16 @@ mod tests {
         fs::remove_dir_all(&dir)?;
 
         Ok(())
+    }
+
+    #[test]
+    fn rejects_lock_name_with_path_separators() {
+        let err = try_acquire_job_lock(std::env::temp_dir(), "../ingest-n02", "first")
+            .expect_err("path traversal lock name should be rejected");
+
+        assert!(
+            err.to_string().contains("invalid job lock name"),
+            "unexpected error: {err}"
+        );
     }
 }

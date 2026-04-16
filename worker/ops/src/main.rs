@@ -1,6 +1,6 @@
 mod export_sqlite;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use sqlx::{
     migrate::Migrator,
@@ -20,7 +20,6 @@ use tracing::info;
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/postgres");
 static MYSQL_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/mysql");
 static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/sqlite");
-const EXPORT_SQLITE_LOCK_NAME: &str = "export-sqlite";
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -58,7 +57,7 @@ async fn main() -> Result<()> {
         Commands::ExportSqlite => {
             let _lock = try_acquire_job_lock(
                 &config.job_lock_dir,
-                EXPORT_SQLITE_LOCK_NAME,
+                N02_INGEST_LOCK_NAME,
                 &config.service_name,
             )?;
             let report = export_sqlite::export_sqlite(&config).await?;
@@ -105,6 +104,10 @@ async fn migrate(config: &AppConfig) -> Result<()> {
 }
 
 async fn run_ingest_n02_job(config: &AppConfig, chain_export_sqlite: bool) -> Result<()> {
+    if chain_export_sqlite && matches!(config.database_type, DatabaseType::Sqlite) {
+        bail!("--export-sqlite expects DATABASE_TYPE to be postgres or mysql");
+    }
+
     let pool = connect_any_pool(&config.database_url).await?;
     let dialect = SqlDialect::from(&config.database_type);
     let _ingest_lock = try_acquire_job_lock(
@@ -132,11 +135,6 @@ async fn run_ingest_n02_job(config: &AppConfig, chain_export_sqlite: bool) -> Re
     );
 
     if chain_export_sqlite {
-        let _export_lock = try_acquire_job_lock(
-            &config.job_lock_dir,
-            EXPORT_SQLITE_LOCK_NAME,
-            &config.service_name,
-        )?;
         let export_report = export_sqlite::export_sqlite(config).await?;
         info!(
             output_path = %export_report.output_path.display(),

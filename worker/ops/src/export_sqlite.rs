@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
+use futures_util::TryStreamExt;
 use sqlx::{
     any::AnyRow,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -44,8 +44,8 @@ pub async fn export_sqlite(config: &AppConfig) -> Result<ExportReport> {
     let source_pool = connect_any_pool(&config.database_url).await?;
     let source_dialect = SqlDialect::from(&config.database_type);
 
-    let temp_url = sqlite_path_to_url(&temp_path);
-    let sqlite_options = SqliteConnectOptions::from_str(&temp_url)?
+    let sqlite_options = SqliteConnectOptions::new()
+        .filename(&temp_path)
         .create_if_missing(true)
         .foreign_keys(true);
     let sqlite_pool = SqlitePoolOptions::new()
@@ -66,10 +66,6 @@ pub async fn export_sqlite(config: &AppConfig) -> Result<ExportReport> {
     sqlx::query("PRAGMA optimize").execute(&sqlite_pool).await?;
     sqlx::query("VACUUM").execute(&sqlite_pool).await?;
     sqlite_pool.close().await;
-
-    if fs::try_exists(&output_path).await? {
-        fs::remove_file(&output_path).await?;
-    }
 
     fs::rename(&temp_path, &output_path).await?;
 
@@ -103,10 +99,6 @@ fn sqlite_url_to_path(sqlite_url: &str) -> Result<PathBuf> {
         .strip_prefix("sqlite://")
         .map(PathBuf::from)
         .with_context(|| format!("unsupported SQLITE_DATABASE_URL: {sqlite_url}"))
-}
-
-fn sqlite_path_to_url(path: &Path) -> String {
-    format!("sqlite://{}", path.display())
 }
 
 fn temp_output_path(path: &Path) -> PathBuf {
@@ -170,9 +162,10 @@ async fn copy_source_snapshots(
         source_dialect.text_cast("downloaded_at")
     );
 
-    let rows = sqlx::query(&query).fetch_all(source_pool).await?;
+    let mut rows = sqlx::query(&query).fetch(source_pool);
+    let mut count = 0;
 
-    for row in &rows {
+    while let Some(row) = rows.try_next().await? {
         sqlx::query(
             "INSERT INTO source_snapshots (
                id,
@@ -185,17 +178,19 @@ async fn copy_source_snapshots(
              ) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(row.try_get::<i64, _>("id")?)
-        .bind(row_string(row, "source_name")?)
-        .bind(row_string(row, "source_kind")?)
-        .bind(row_optional_string(row, "source_version")?)
-        .bind(row_string(row, "source_url")?)
-        .bind(row_string(row, "source_sha256")?)
-        .bind(row_string(row, "downloaded_at")?)
+        .bind(row_string(&row, "source_name")?)
+        .bind(row_string(&row, "source_kind")?)
+        .bind(row_optional_string(&row, "source_version")?)
+        .bind(row_string(&row, "source_url")?)
+        .bind(row_string(&row, "source_sha256")?)
+        .bind(row_string(&row, "downloaded_at")?)
         .execute(&mut **tx)
         .await?;
+
+        count += 1;
     }
 
-    Ok(rows.len())
+    Ok(count)
 }
 
 async fn copy_station_identities(
@@ -216,9 +211,10 @@ async fn copy_station_identities(
         source_dialect.text_cast("created_at")
     );
 
-    let rows = sqlx::query(&query).fetch_all(source_pool).await?;
+    let mut rows = sqlx::query(&query).fetch(source_pool);
+    let mut count = 0;
 
-    for row in &rows {
+    while let Some(row) = rows.try_next().await? {
         sqlx::query(
             "INSERT INTO station_identities (
                id,
@@ -228,14 +224,16 @@ async fn copy_station_identities(
              ) VALUES (?, ?, ?, ?)",
         )
         .bind(row.try_get::<i64, _>("id")?)
-        .bind(row_string(row, "station_uid")?)
-        .bind(row_string(row, "canonical_name")?)
-        .bind(row_string(row, "created_at")?)
+        .bind(row_string(&row, "station_uid")?)
+        .bind(row_string(&row, "canonical_name")?)
+        .bind(row_string(&row, "created_at")?)
         .execute(&mut **tx)
         .await?;
+
+        count += 1;
     }
 
-    Ok(rows.len())
+    Ok(count)
 }
 
 async fn copy_station_versions(
@@ -279,9 +277,10 @@ async fn copy_station_versions(
         text_select(source_dialect, "change_hash")
     );
 
-    let rows = sqlx::query(&query).fetch_all(source_pool).await?;
+    let mut rows = sqlx::query(&query).fetch(source_pool);
+    let mut count = 0;
 
-    for row in &rows {
+    while let Some(row) = rows.try_next().await? {
         sqlx::query(
             "INSERT INTO station_versions (
                id,
@@ -304,27 +303,29 @@ async fn copy_station_versions(
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(row.try_get::<i64, _>("id")?)
-        .bind(row_string(row, "station_uid")?)
+        .bind(row_string(&row, "station_uid")?)
         .bind(row.try_get::<i64, _>("snapshot_id")?)
-        .bind(row_optional_string(row, "source_station_code")?)
-        .bind(row_optional_string(row, "source_group_code")?)
-        .bind(row_string(row, "station_name")?)
-        .bind(row_string(row, "line_name")?)
-        .bind(row_string(row, "operator_name")?)
+        .bind(row_optional_string(&row, "source_station_code")?)
+        .bind(row_optional_string(&row, "source_group_code")?)
+        .bind(row_string(&row, "station_name")?)
+        .bind(row_string(&row, "line_name")?)
+        .bind(row_string(&row, "operator_name")?)
         .bind(row.try_get::<f64, _>("latitude")?)
         .bind(row.try_get::<f64, _>("longitude")?)
-        .bind(row_optional_string(row, "geometry_geojson")?)
-        .bind(row_string(row, "status")?)
-        .bind(row_optional_string(row, "opened_on")?)
-        .bind(row_optional_string(row, "closed_on")?)
-        .bind(row_string(row, "valid_from")?)
-        .bind(row_optional_string(row, "valid_to")?)
-        .bind(row_string(row, "change_hash")?)
+        .bind(row_optional_string(&row, "geometry_geojson")?)
+        .bind(row_string(&row, "status")?)
+        .bind(row_optional_string(&row, "opened_on")?)
+        .bind(row_optional_string(&row, "closed_on")?)
+        .bind(row_string(&row, "valid_from")?)
+        .bind(row_optional_string(&row, "valid_to")?)
+        .bind(row_string(&row, "change_hash")?)
         .execute(&mut **tx)
         .await?;
+
+        count += 1;
     }
 
-    Ok(rows.len())
+    Ok(count)
 }
 
 async fn copy_station_change_events(
@@ -350,9 +351,10 @@ async fn copy_station_change_events(
         source_dialect.text_cast("created_at")
     );
 
-    let rows = sqlx::query(&query).fetch_all(source_pool).await?;
+    let mut rows = sqlx::query(&query).fetch(source_pool);
+    let mut count = 0;
 
-    for row in &rows {
+    while let Some(row) = rows.try_next().await? {
         sqlx::query(
             "INSERT INTO station_change_events (
                id,
@@ -367,17 +369,19 @@ async fn copy_station_change_events(
         )
         .bind(row.try_get::<i64, _>("id")?)
         .bind(row.try_get::<i64, _>("snapshot_id")?)
-        .bind(row_string(row, "station_uid")?)
-        .bind(row_string(row, "change_kind")?)
+        .bind(row_string(&row, "station_uid")?)
+        .bind(row_string(&row, "change_kind")?)
         .bind(row.try_get::<Option<i64>, _>("before_version_id")?)
         .bind(row.try_get::<Option<i64>, _>("after_version_id")?)
-        .bind(row_optional_string(row, "detail_json")?)
-        .bind(row_string(row, "created_at")?)
+        .bind(row_optional_string(&row, "detail_json")?)
+        .bind(row_string(&row, "created_at")?)
         .execute(&mut **tx)
         .await?;
+
+        count += 1;
     }
 
-    Ok(rows.len())
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -388,6 +392,18 @@ mod tests {
     fn parses_relative_sqlite_url() {
         let path = sqlite_url_to_path("sqlite://storage/sqlite/stations.sqlite3").unwrap();
         assert_eq!(path, PathBuf::from("storage/sqlite/stations.sqlite3"));
+    }
+
+    #[test]
+    fn parses_absolute_sqlite_url() {
+        let path = sqlite_url_to_path(
+            "sqlite:///opt/station_converter_ja/storage/sqlite/stations.sqlite3",
+        )
+        .unwrap();
+        assert_eq!(
+            path,
+            PathBuf::from("/opt/station_converter_ja/storage/sqlite/stations.sqlite3")
+        );
     }
 
     #[test]
