@@ -19,7 +19,7 @@ cp -n frontend/.env.local.example frontend/.env.local || true
 mkdir -p storage/locks storage/sqlite worker/crawler/temp_assets
 
 for env_file in worker/api/.env worker/crawler/.env worker/ops/.env; do
-  tmp_file="$(mktemp)"
+  tmp_file="$(mktemp "${env_file}.tmp.XXXXXX")"
   awk -v db_type="$DB_TYPE" '
     /^DATABASE_TYPE=/ { print "DATABASE_TYPE=" db_type; next }
     { print }

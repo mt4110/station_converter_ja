@@ -266,12 +266,8 @@ async fn copy_station_identities(
     Ok(count)
 }
 
-async fn copy_station_versions(
-    source_pool: &sqlx::AnyPool,
-    source_dialect: SqlDialect,
-    tx: &mut Transaction<'_, Sqlite>,
-) -> Result<usize> {
-    let query = format!(
+fn station_versions_select_query(source_dialect: SqlDialect) -> String {
+    format!(
         "SELECT
            id,
            {},
@@ -285,10 +281,10 @@ async fn copy_station_versions(
            longitude,
            {},
            {},
-           {} AS opened_on,
-           {} AS closed_on,
-           {} AS valid_from,
-           {} AS valid_to,
+           {},
+           {},
+           {},
+           {},
            {}
          FROM station_versions
          ORDER BY id",
@@ -305,7 +301,15 @@ async fn copy_station_versions(
         text_select(source_dialect, "valid_from"),
         text_select(source_dialect, "valid_to"),
         text_select(source_dialect, "change_hash")
-    );
+    )
+}
+
+async fn copy_station_versions(
+    source_pool: &sqlx::AnyPool,
+    source_dialect: SqlDialect,
+    tx: &mut Transaction<'_, Sqlite>,
+) -> Result<usize> {
+    let query = station_versions_select_query(source_dialect);
 
     let mut rows = sqlx::query(&query).fetch(source_pool);
     let mut count = 0;
@@ -475,6 +479,16 @@ mod tests {
             text_select(SqlDialect::Mysql, "detail_json"),
             "CAST(detail_json AS CHAR) AS detail_json"
         );
+    }
+
+    #[test]
+    fn mysql_station_versions_query_aliases_dates_once() {
+        let query = station_versions_select_query(SqlDialect::Mysql);
+
+        assert!(query.contains("CAST(opened_on AS CHAR) AS opened_on"));
+        assert!(query.contains("CAST(valid_from AS CHAR) AS valid_from"));
+        assert!(!query.contains("AS opened_on AS opened_on"));
+        assert!(!query.contains("AS valid_from AS valid_from"));
     }
 
     #[test]
