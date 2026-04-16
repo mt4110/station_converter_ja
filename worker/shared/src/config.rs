@@ -130,19 +130,30 @@ fn load_service_env(service_name: &str) -> Result<()> {
 }
 
 fn resolve_env_path(env_path: &Path) -> Option<PathBuf> {
+    let roots = build_env_search_roots(env::current_dir().ok(), env::current_exe().ok());
+
+    find_env_path(env_path, &roots)
+}
+
+fn build_env_search_roots(
+    current_dir: Option<PathBuf>,
+    current_exe: Option<PathBuf>,
+) -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
-    if let Ok(current_dir) = env::current_dir() {
-        roots.push(current_dir);
-    }
-
-    if let Ok(current_exe) = env::current_exe() {
+    if let Some(current_exe) = current_exe {
         if let Some(parent) = current_exe.parent() {
             roots.push(parent.to_path_buf());
         }
     }
 
-    find_env_path(env_path, &roots)
+    if let Some(current_dir) = current_dir {
+        if !roots.iter().any(|root| root == &current_dir) {
+            roots.push(current_dir);
+        }
+    }
+
+    roots
 }
 
 fn find_env_path(env_path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
@@ -179,6 +190,34 @@ mod tests {
         assert_eq!(resolved, nested.join(".env"));
 
         fs::remove_dir_all(root)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn prefers_executable_root_over_current_dir() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let base = std::env::temp_dir().join(format!("station-config-order-{unique}"));
+        let cwd_root = base.join("cwd-root");
+        let exe_root = base.join("exe-root");
+        let cwd_env = cwd_root.join("worker/ops/.env");
+        let exe_env = exe_root.join("worker/ops/.env");
+
+        fs::create_dir_all(cwd_env.parent().expect("cwd env parent"))?;
+        fs::create_dir_all(exe_env.parent().expect("exe env parent"))?;
+        fs::write(&cwd_env, "DATABASE_TYPE=mysql\n")?;
+        fs::write(&exe_env, "DATABASE_TYPE=postgres\n")?;
+
+        let roots = build_env_search_roots(
+            Some(cwd_root.clone()),
+            Some(exe_root.join("target/release/station-ops")),
+        );
+        let resolved = find_env_path(Path::new("worker/ops/.env"), &roots)
+            .expect("env file should resolve from executable root first");
+
+        assert_eq!(resolved, exe_env);
+
+        fs::remove_dir_all(base)?;
 
         Ok(())
     }
