@@ -1,0 +1,11 @@
+[Unit]
+Description=Run station_converter_ja N02 ingest daily
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=station-converter-ja-ingest-n02.service
+
+[Install]
+WantedBy=timers.target

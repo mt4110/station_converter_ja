@@ -42,6 +42,13 @@ impl SqlDialect {
             Self::Mysql | Self::Sqlite => "?",
         }
     }
+
+    pub fn text_cast(self, expression: &str) -> String {
+        match self {
+            Self::Postgres | Self::Sqlite => format!("CAST({expression} AS TEXT)"),
+            Self::Mysql => format!("CAST({expression} AS CHAR)"),
+        }
+    }
 }
 
 impl From<&DatabaseType> for SqlDialect {

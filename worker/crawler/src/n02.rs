@@ -41,6 +41,15 @@ struct ParsedSnapshot {
     stations: Vec<ParsedStation>,
 }
 
+struct NewChangeEvent<'a> {
+    snapshot_id: i64,
+    station_uid: &'a str,
+    change_kind: &'a str,
+    before_version_id: Option<i64>,
+    after_version_id: Option<i64>,
+    detail_json: Value,
+}
+
 #[derive(Clone, Debug)]
 struct ParsedStation {
     station_uid: String,
@@ -147,7 +156,7 @@ fn parse_feature_collection(
     source_version: Option<String>,
 ) -> Result<ParsedSnapshot> {
     let feature_collection: RawFeatureCollection =
-        serde_json::from_slice(&geojson_bytes).context("failed to parse N02 station GeoJSON")?;
+        serde_json::from_slice(geojson_bytes).context("failed to parse N02 station GeoJSON")?;
 
     let parsed_features = feature_collection.features.len();
     let mut grouped: BTreeMap<LogicalStationKey, Vec<Vec<[f64; 2]>>> = BTreeMap::new();
@@ -230,12 +239,14 @@ async fn persist_snapshot(
                 insert_change_event(
                     &mut tx,
                     dialect,
-                    snapshot_id,
-                    &station.station_uid,
-                    "created",
-                    None,
-                    Some(after_version_id),
-                    created_detail_json(station),
+                    NewChangeEvent {
+                        snapshot_id,
+                        station_uid: &station.station_uid,
+                        change_kind: "created",
+                        before_version_id: None,
+                        after_version_id: Some(after_version_id),
+                        detail_json: created_detail_json(station),
+                    },
                 )
                 .await?;
                 created += 1;
@@ -250,12 +261,14 @@ async fn persist_snapshot(
                 insert_change_event(
                     &mut tx,
                     dialect,
-                    snapshot_id,
-                    &station.station_uid,
-                    "updated",
-                    Some(existing.id),
-                    Some(after_version_id),
-                    updated_detail_json(&existing, station),
+                    NewChangeEvent {
+                        snapshot_id,
+                        station_uid: &station.station_uid,
+                        change_kind: "updated",
+                        before_version_id: Some(existing.id),
+                        after_version_id: Some(after_version_id),
+                        detail_json: updated_detail_json(&existing, station),
+                    },
                 )
                 .await?;
                 updated += 1;
@@ -269,12 +282,14 @@ async fn persist_snapshot(
         insert_change_event(
             &mut tx,
             dialect,
-            snapshot_id,
-            &stale.station_uid,
-            "removed",
-            Some(stale.id),
-            None,
-            removed_detail_json(&stale),
+            NewChangeEvent {
+                snapshot_id,
+                station_uid: &stale.station_uid,
+                change_kind: "removed",
+                before_version_id: Some(stale.id),
+                after_version_id: None,
+                detail_json: removed_detail_json(&stale),
+            },
         )
         .await?;
         removed += 1;
@@ -537,12 +552,7 @@ async fn insert_station_version(
 async fn insert_change_event(
     tx: &mut Transaction<'_, Any>,
     dialect: SqlDialect,
-    snapshot_id: i64,
-    station_uid: &str,
-    change_kind: &str,
-    before_version_id: Option<i64>,
-    after_version_id: Option<i64>,
-    detail_json: Value,
+    event: NewChangeEvent<'_>,
 ) -> Result<()> {
     sqlx::query(&dialect.statement(
         "INSERT INTO station_change_events (
@@ -554,12 +564,12 @@ async fn insert_change_event(
            detail_json
          ) VALUES (?, ?, ?, ?, ?, ?)",
     ))
-    .bind(snapshot_id)
-    .bind(station_uid)
-    .bind(change_kind)
-    .bind(before_version_id)
-    .bind(after_version_id)
-    .bind(detail_json.to_string())
+    .bind(event.snapshot_id)
+    .bind(event.station_uid)
+    .bind(event.change_kind)
+    .bind(event.before_version_id)
+    .bind(event.after_version_id)
+    .bind(event.detail_json.to_string())
     .execute(&mut **tx)
     .await?;
 

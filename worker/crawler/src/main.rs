@@ -1,21 +1,21 @@
-mod n02;
-
 use anyhow::Result;
 use clap::Parser;
+use station_crawler::{run_n02_ingest_cycle, N02_INGEST_LOCK_NAME};
 use station_shared::{
     config::AppConfig,
     db::{connect_any_pool, SqlDialect},
+    job_lock::{acquire_job_lock, JobLockBusy},
 };
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
-const DEFAULT_SOURCE_SNAPSHOT_URL: &str =
-    "https://nlftp.mlit.go.jp/ksj/gml/data/N02/N02-24/N02-24_GML.zip";
-
 #[derive(Debug, Parser)]
 struct Cli {
-    #[arg(long)]
+    #[arg(long, conflicts_with = "loop_mode")]
     once: bool,
+
+    #[arg(long = "loop", conflicts_with = "once")]
+    loop_mode: bool,
 }
 
 #[tokio::main]
@@ -26,44 +26,43 @@ async fn main() -> Result<()> {
     let config = AppConfig::from_env("station-crawler")?;
     let pool = connect_any_pool(&config.database_url).await?;
     let dialect = SqlDialect::from(&config.database_type);
+    let run_loop = cli.loop_mode && !cli.once;
+
+    if !run_loop {
+        let report = run_once(&config, &pool, dialect).await?;
+        info!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
+
+    info!(
+        interval_seconds = config.update_interval_seconds,
+        "starting crawler dev loop"
+    );
 
     loop {
         match run_once(&config, &pool, dialect).await {
-            Ok(()) => info!("crawler cycle complete"),
+            Ok(report) => info!("{}", serde_json::to_string(&report)?),
+            Err(err) if err.downcast_ref::<JobLockBusy>().is_some() => {
+                info!(error = %err, "ingest lock busy, skipping dev-loop cycle");
+            }
             Err(err) => error!(error = %err, "crawler cycle failed"),
-        }
-
-        if cli.once {
-            break;
         }
 
         sleep(Duration::from_secs(config.update_interval_seconds)).await;
     }
-
-    Ok(())
 }
 
-async fn run_once(config: &AppConfig, pool: &sqlx::AnyPool, dialect: SqlDialect) -> Result<()> {
-    let source_url = config
-        .source_snapshot_url
-        .as_deref()
-        .unwrap_or(DEFAULT_SOURCE_SNAPSHOT_URL);
+async fn run_once(
+    config: &AppConfig,
+    pool: &sqlx::AnyPool,
+    dialect: SqlDialect,
+) -> Result<station_crawler::n02::IngestReport> {
+    let _lock = acquire_job_lock(
+        &config.job_lock_dir,
+        N02_INGEST_LOCK_NAME,
+        &config.service_name,
+    )
+    .await?;
 
-    tokio::fs::create_dir_all(&config.temp_asset_dir).await?;
-
-    info!(source_url = %source_url, "downloading source snapshot");
-
-    let response = reqwest::get(source_url).await?.error_for_status()?;
-    let bytes = response.bytes().await?;
-
-    let filename = format!("snapshot-{}.zip", chrono::Utc::now().format("%Y%m%d%H%M%S"));
-    let output_path = format!("{}/{}", config.temp_asset_dir, filename);
-
-    tokio::fs::write(&output_path, &bytes).await?;
-
-    let report =
-        n02::ingest_snapshot(pool, dialect, source_url, &output_path, bytes.as_ref()).await?;
-
-    info!("{}", serde_json::to_string(&report)?);
-    Ok(())
+    run_n02_ingest_cycle(config, pool, dialect).await
 }

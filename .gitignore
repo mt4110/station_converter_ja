@@ -25,6 +25,8 @@ worker/crawler/temp_assets/*.gml
 # sqlite artifacts
 artifacts/sqlite/*
 !artifacts/sqlite/.gitkeep
+storage/locks/*
+!storage/locks/.gitkeep
 storage/sqlite/*
 !storage/sqlite/.gitkeep
 
