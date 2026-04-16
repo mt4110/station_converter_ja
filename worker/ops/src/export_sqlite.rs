@@ -363,10 +363,10 @@ async fn copy_station_versions(
         text_select(source_dialect, "operator_name"),
         text_select(source_dialect, "geometry_geojson"),
         text_select(source_dialect, "status"),
-        source_dialect.text_cast("opened_on"),
-        source_dialect.text_cast("closed_on"),
-        source_dialect.text_cast("valid_from"),
-        source_dialect.text_cast("valid_to"),
+        text_select(source_dialect, "opened_on"),
+        text_select(source_dialect, "closed_on"),
+        text_select(source_dialect, "valid_from"),
+        text_select(source_dialect, "valid_to"),
         text_select(source_dialect, "change_hash")
     );
 
