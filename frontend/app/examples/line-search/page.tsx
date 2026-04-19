@@ -41,6 +41,7 @@ type HelperMode = "line" | "area";
 export default function LineSearchPage() {
   const [lineName, setLineName] = useState("山手線");
   const [result, setResult] = useState<LineStationsResponse | null>(null);
+  const [selectedCatalogEntry, setSelectedCatalogEntry] = useState<LineCatalogEntry | null>(null);
   const [dataset, setDataset] = useState<DatasetStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [datasetLoading, setDatasetLoading] = useState(true);
@@ -97,12 +98,12 @@ export default function LineSearchPage() {
     }
   }
 
-  async function runLookup(nextLineName: string) {
+  async function runLookup(nextLineName: string, nextOperatorName?: string | null) {
     setLoading(true);
     setError(null);
 
     try {
-      setResult(await listLineStations(nextLineName));
+      setResult(await listLineStations(nextLineName, nextOperatorName));
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "路線検索に失敗しました。");
       setResult(null);
@@ -116,15 +117,17 @@ export default function LineSearchPage() {
     if (!datasetReady) {
       return;
     }
-    await runLookup(lineName);
+    setSelectedCatalogEntry(null);
+    await runLookup(lineName, null);
   }
 
-  async function applyLineSuggestion(nextLineName: string) {
-    setLineName(nextLineName);
+  async function applyLineSuggestion(entry: LineCatalogEntry) {
+    setLineName(entry.line_name);
+    setSelectedCatalogEntry(entry);
     if (!datasetReady) {
       return;
     }
-    await runLookup(nextLineName);
+    await runLookup(entry.line_name, entry.operator_name);
   }
 
   useEffect(() => {
@@ -135,10 +138,12 @@ export default function LineSearchPage() {
     if (!datasetReady) {
       setResult(null);
       setCatalog(null);
+      setSelectedCatalogEntry(null);
       return;
     }
     void loadCatalog();
-    void runLookup("山手線");
+    setSelectedCatalogEntry(null);
+    void runLookup("山手線", null);
   }, [datasetReady]);
 
   function catalogCaption(entry: LineCatalogEntry) {
@@ -186,7 +191,10 @@ export default function LineSearchPage() {
         <form onSubmit={onSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input
             value={lineName}
-            onChange={(e) => setLineName(e.target.value)}
+            onChange={(e) => {
+              setLineName(e.target.value);
+              setSelectedCatalogEntry(null);
+            }}
             disabled={!datasetReady}
             style={{
               flex: "1 1 320px",
@@ -264,13 +272,15 @@ export default function LineSearchPage() {
                 }}
               >
                 {filteredCatalogEntries.items.map((entry) => {
-                  const selected = entry.line_name === lineName;
+                  const selected =
+                    selectedCatalogEntry?.line_name === entry.line_name &&
+                    selectedCatalogEntry.operator_name === entry.operator_name;
 
                   return (
                     <button
                       key={`${entry.line_name}:${entry.operator_name}`}
                       type="button"
-                      onClick={() => void applyLineSuggestion(entry.line_name)}
+                      onClick={() => void applyLineSuggestion(entry)}
                       disabled={!datasetReady}
                       style={{
                         minHeight: 68,
@@ -306,8 +316,12 @@ export default function LineSearchPage() {
       {result ? (
         <>
           <ResultSummary
-            primary={`「${result.line_name}」の駅一覧 ${result.items.length.toLocaleString()}件`}
-            secondary="同名路線の混在は事業者名を見て判断できます。"
+            primary={`「${result.line_name}${result.operator_name ? ` / ${result.operator_name}` : ""}」の駅一覧 ${result.items.length.toLocaleString()}件`}
+            secondary={
+              result.operator_name
+                ? `${result.operator_name} の路線だけを表示しています。`
+                : "同名路線は事業者名を見て判断できます。"
+            }
           />
           <StationList
             items={result.items}

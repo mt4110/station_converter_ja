@@ -39,6 +39,11 @@ struct NearbyParams {
     limit: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct LineStationsParams {
+    operator_name: Option<String>,
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().with_env_filter("info").init();
@@ -376,10 +381,22 @@ async fn line_catalog(
 async fn line_stations(
     State(state): State<AppState>,
     Path(line_name): Path<String>,
+    Query(params): Query<LineStationsParams>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let line_name_match = text_equals_sql(state.dialect, "line_name");
+    let operator_name_match = text_equals_sql(state.dialect, "operator_name");
     let operator_name_order = text_order_sql(state.dialect, "operator_name");
     let station_name_order = text_order_sql(state.dialect, "station_name");
+    let operator_name = params
+        .operator_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let where_clause = if operator_name.is_some() {
+        format!("{line_name_match} AND {operator_name_match}")
+    } else {
+        line_name_match
+    };
     let sql = format!(
         "SELECT
            station_uid,
@@ -390,14 +407,23 @@ async fn line_stations(
            longitude,
            status
          FROM stations_latest
-         WHERE {line_name_match}
+         WHERE {where_clause}
          ORDER BY {operator_name_order}, {station_name_order}",
     );
-    let rows = sqlx::query(&state.dialect.statement(&sql))
-        .bind(&line_name)
-        .fetch_all(&state.pool)
-        .await
-        .map_err(internal_error)?;
+    let statement = state.dialect.statement(&sql);
+    let rows = if let Some(operator_name) = operator_name {
+        sqlx::query(&statement)
+            .bind(&line_name)
+            .bind(operator_name)
+            .fetch_all(&state.pool)
+            .await
+    } else {
+        sqlx::query(&statement)
+            .bind(&line_name)
+            .fetch_all(&state.pool)
+            .await
+    }
+    .map_err(internal_error)?;
 
     let items = rows
         .into_iter()
@@ -407,6 +433,7 @@ async fn line_stations(
 
     Ok(Json(json!({
         "line_name": line_name,
+        "operator_name": operator_name,
         "items": items,
     })))
 }
@@ -564,8 +591,8 @@ mod tests {
     use super::{
         dataset_status, distinct_text_count_sql, integer_aggregate_sql, line_catalog,
         line_stations, nullable_integer_aggregate_sql, operator_stations, search_stations,
-        text_equals_sql, text_group_sql, text_like_sql, text_order_sql, AppState, SearchParams,
-        N02_SOURCE_NAME,
+        text_equals_sql, text_group_sql, text_like_sql, text_order_sql, AppState,
+        LineStationsParams, SearchParams, N02_SOURCE_NAME,
     };
 
     #[test]
@@ -684,25 +711,86 @@ mod tests {
         .await;
 
         let state = test_state(pool);
-        let response = line_stations(State(state.clone()), Path("江の島線".to_string()))
-            .await
-            .unwrap()
-            .0;
+        let response = line_stations(
+            State(state.clone()),
+            Path("江の島線".to_string()),
+            Query(LineStationsParams {
+                operator_name: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
         let items = response["items"].as_array().unwrap();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["station_name"].as_str(), Some("片瀬江ノ島"));
         assert_eq!(items[0]["line_name"].as_str(), Some("江の島線"));
 
-        let response = line_stations(State(state), Path("江ノ島線".to_string()))
-            .await
-            .unwrap()
-            .0;
+        let response = line_stations(
+            State(state),
+            Path("江ノ島線".to_string()),
+            Query(LineStationsParams {
+                operator_name: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
         let items = response["items"].as_array().unwrap();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["station_name"].as_str(), Some("湘南江の島"));
         assert_eq!(items[0]["line_name"].as_str(), Some("江ノ島線"));
+    }
+
+    #[tokio::test]
+    async fn line_stations_can_filter_same_line_by_operator() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 1).await;
+        insert_station(
+            &pool,
+            1,
+            StationSeed::new(
+                "stn_central_jr",
+                "新宿",
+                "中央線",
+                "東日本旅客鉄道",
+                35.6900,
+                139.7000,
+            ),
+        )
+        .await;
+        insert_station(
+            &pool,
+            1,
+            StationSeed::new(
+                "stn_central_subway",
+                "中野坂上",
+                "中央線",
+                "東京地下鉄",
+                35.6970,
+                139.6820,
+            ),
+        )
+        .await;
+
+        let response = line_stations(
+            State(test_state(pool)),
+            Path("中央線".to_string()),
+            Query(LineStationsParams {
+                operator_name: Some("東京地下鉄".to_string()),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+        let items = response["items"].as_array().unwrap();
+
+        assert_eq!(response["operator_name"].as_str(), Some("東京地下鉄"));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["operator_name"].as_str(), Some("東京地下鉄"));
+        assert_eq!(items[0]["station_name"].as_str(), Some("中野坂上"));
     }
 
     #[tokio::test]

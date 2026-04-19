@@ -38,6 +38,7 @@ export type NearbyStationsResponse = {
 export type LineStationsResponse = {
   items: StationSummary[];
   line_name: string;
+  operator_name?: string | null;
 };
 
 export type LineCatalogEntry = {
@@ -136,8 +137,13 @@ export async function searchNearbyStations(lat: number, lng: number, limit = 10)
   return fetchJson<NearbyStationsResponse>(url);
 }
 
-export async function listLineStations(lineName: string) {
-  const url = `${baseUrl}/v1/lines/${encodeURIComponent(lineName)}/stations`;
+export async function listLineStations(lineName: string, operatorName?: string | null) {
+  const params = new URLSearchParams();
+  if (operatorName) {
+    params.set("operator_name", operatorName);
+  }
+  const query = params.toString();
+  const url = `${baseUrl}/v1/lines/${encodeURIComponent(lineName)}/stations${query ? `?${query}` : ""}`;
   return fetchJson<LineStationsResponse>(url);
 }
 
