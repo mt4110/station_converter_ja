@@ -544,6 +544,7 @@ fn integer_aggregate_sql(dialect: SqlDialect, expr: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn nullable_integer_aggregate_sql(dialect: SqlDialect, expr: &str) -> String {
     match dialect {
         SqlDialect::Mysql => format!("CAST({expr} AS SIGNED)"),

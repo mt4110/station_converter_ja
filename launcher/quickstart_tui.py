@@ -767,8 +767,14 @@ class QuickstartApp:
             return False
         return bool(self._item_state(workflow_item_id).get("cancel_requested"))
 
-    def _run_and_wait_task(self, item_id: str, workflow_item_id: Optional[str] = None) -> bool:
-        self._start_item(item_id, from_workflow=True)
+    def _run_and_wait_task(
+        self,
+        item_id: str,
+        workflow_item_id: Optional[str] = None,
+        already_started: bool = False,
+    ) -> bool:
+        if not already_started:
+            self._start_item(item_id, from_workflow=True)
         item_state = self._item_state(item_id)
         pid = item_state.get("pid")
         if not pid:
@@ -863,7 +869,11 @@ class QuickstartApp:
                             break
 
                         if step["kind"] in {"task", "docker"}:
-                            if not self._run_and_wait_task(step_id, workflow_item_id=item_id):
+                            if not self._run_and_wait_task(
+                                step_id,
+                                workflow_item_id=item_id,
+                                already_started=True,
+                            ):
                                 if self._workflow_cancel_requested(item_id):
                                     canceled = True
                                     handle.write(
