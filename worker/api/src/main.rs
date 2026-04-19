@@ -194,8 +194,8 @@ async fn dataset_status(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let n02_where_clause = format!(
-        "WHERE substr(station_uid, 1, {}) = ?",
-        N02_STATION_UID_PREFIX.len()
+        "WHERE {}",
+        station_uid_prefix_scope_sql(state.dialect, "station_uid")
     );
     let counts_sql = format!(
         "SELECT
@@ -217,7 +217,10 @@ async fn dataset_status(
         integer_aggregate_sql(state.dialect, "COUNT(DISTINCT snapshot_id)"),
     );
     let counts = sqlx::query(&state.dialect.statement(&counts_sql))
-        .bind(N02_STATION_UID_PREFIX)
+        .bind(station_uid_prefix_scope_arg(
+            state.dialect,
+            N02_STATION_UID_PREFIX,
+        ))
         .fetch_one(&state.pool)
         .await
         .map_err(internal_error)?;
@@ -566,6 +569,30 @@ fn distinct_text_count_sql(dialect: SqlDialect, column: &str) -> String {
     }
 }
 
+fn station_uid_prefix_scope_sql(dialect: SqlDialect, column: &str) -> String {
+    match dialect {
+        SqlDialect::Mysql => format!("{column} COLLATE utf8mb4_bin LIKE ? ESCAPE '\\\\'"),
+        SqlDialect::Postgres | SqlDialect::Sqlite => {
+            format!("substr({column}, 1, {}) = ?", N02_STATION_UID_PREFIX.len())
+        }
+    }
+}
+
+fn station_uid_prefix_scope_arg(dialect: SqlDialect, prefix: &str) -> String {
+    match dialect {
+        SqlDialect::Mysql => like_prefix_pattern(prefix),
+        SqlDialect::Postgres | SqlDialect::Sqlite => prefix.to_string(),
+    }
+}
+
+fn like_prefix_pattern(prefix: &str) -> String {
+    let escaped = prefix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("{escaped}%")
+}
+
 fn text_equals_sql(dialect: SqlDialect, column: &str) -> String {
     match dialect {
         SqlDialect::Mysql => format!("{column} COLLATE utf8mb4_bin = ?"),
@@ -607,10 +634,11 @@ mod tests {
     };
 
     use super::{
-        dataset_status, distinct_text_count_sql, integer_aggregate_sql, line_catalog,
-        line_stations, nullable_integer_aggregate_sql, operator_stations, search_stations,
+        dataset_status, distinct_text_count_sql, integer_aggregate_sql, like_prefix_pattern,
+        line_catalog, line_stations, nullable_integer_aggregate_sql, operator_stations,
+        search_stations, station_uid_prefix_scope_arg, station_uid_prefix_scope_sql,
         text_equals_sql, text_group_sql, text_like_sql, text_order_sql, AppState,
-        LineStationsParams, SearchParams, N02_SOURCE_NAME,
+        LineStationsParams, SearchParams, N02_SOURCE_NAME, N02_STATION_UID_PREFIX,
     };
 
     #[test]
@@ -667,6 +695,31 @@ mod tests {
             text_group_sql(SqlDialect::Mysql, "line_name"),
             "line_name COLLATE utf8mb4_bin"
         );
+    }
+
+    #[test]
+    fn mysql_station_uid_prefix_scope_uses_binary_like_with_escaped_prefix() {
+        assert_eq!(
+            station_uid_prefix_scope_sql(SqlDialect::Mysql, "station_uid"),
+            "station_uid COLLATE utf8mb4_bin LIKE ? ESCAPE '\\\\'"
+        );
+        assert_eq!(
+            station_uid_prefix_scope_arg(SqlDialect::Mysql, N02_STATION_UID_PREFIX),
+            "stn\\_n02\\_%"
+        );
+    }
+
+    #[test]
+    fn sqlite_station_uid_prefix_scope_stays_substr_exact() {
+        assert_eq!(
+            station_uid_prefix_scope_sql(SqlDialect::Sqlite, "station_uid"),
+            "substr(station_uid, 1, 8) = ?"
+        );
+        assert_eq!(
+            station_uid_prefix_scope_arg(SqlDialect::Sqlite, N02_STATION_UID_PREFIX),
+            N02_STATION_UID_PREFIX
+        );
+        assert_eq!(like_prefix_pattern("stn_n02_"), "stn\\_n02\\_%");
     }
 
     #[test]

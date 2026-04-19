@@ -63,7 +63,11 @@ pub async fn run_n02_ingest_cycle(
 }
 
 fn is_remote_snapshot_url(url: &str) -> bool {
-    url.starts_with("https://") || url.starts_with("http://")
+    let Some((scheme, _)) = url.split_once("://") else {
+        return false;
+    };
+
+    scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
 }
 
 async fn load_snapshot_bytes(source_url: &str) -> Result<Vec<u8>> {
@@ -99,6 +103,13 @@ mod tests {
     use zip::{write::SimpleFileOptions, ZipWriter};
 
     use super::*;
+
+    #[test]
+    fn remote_snapshot_url_check_is_case_insensitive() {
+        assert!(is_remote_snapshot_url("HTTPS://example.com/N02.zip"));
+        assert!(is_remote_snapshot_url("http://example.com/N02.zip"));
+        assert!(!is_remote_snapshot_url("/tmp/N02.zip"));
+    }
 
     #[tokio::test]
     async fn run_n02_ingest_cycle_reports_phase_timings() {
