@@ -1,34 +1,33 @@
 # DEPLOY
 
-## Policy
+## Supported today
 
-- AWS first
-- GCP / Azure skeleton kept in-tree
-- keep HCL plain
-- allow local `tofu` / CI `terraform-compatible` execution
-- app containers stay portable
+この repo でそのまま実運用に乗せやすい導線は **self-hosted + external scheduler / systemd** です。
 
-## Targets
+- resident API: `station-api`
+- scheduled ingest: `station-ops job ingest-n02`
+- optional SQLite artifact chain: `--export-sqlite`
 
-### AWS
-- ECS/Fargate or App Runner
-- RDS PostgreSQL or Aurora PostgreSQL
-- ElastiCache Redis
-- S3 for SQLite artifact publishing
+`deploy/systemd/` に実ファイルを置いています。
 
-### GCP
-- Cloud Run
-- Cloud SQL PostgreSQL
-- Memorystore Redis
-- Cloud Storage for SQLite artifact publishing
+## Cloud skeletons kept in-tree
 
-### Azure
-- Container Apps
-- Azure Database for PostgreSQL
-- Azure Cache for Redis
-- Blob Storage for SQLite artifact publishing
+次は将来拡張用の骨格として残しています。
 
-## Notes
+- `deploy/helm/station-converter-ja/`
+- `deploy/k8s/base/`
+- `deploy/argocd/`
+- `infra/terraform/`
 
-This scaffold only ships the directory layout and variable contracts.
-Real cloud resources are not implemented yet.
+現時点では、これらは「位置と責務の約束」を表すもので、
+production resource 実装まではまだ入れていません。
+
+## Artifact publishing targets
+
+SQLite artifact の公開先としては次を想定しています。
+
+- AWS: S3
+- GCP: Cloud Storage
+- Azure: Blob Storage
+
+artifact 自体の生成導線は [`docs/RELEASE.md`](./RELEASE.md) にまとめています。

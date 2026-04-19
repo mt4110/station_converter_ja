@@ -1,16 +1,21 @@
+mod export_sqlite;
 mod validate_ingest;
 
-use std::process::ExitCode;
+use std::{process::ExitCode, str::FromStr};
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use sqlx::{
-    migrate::Migrator, mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions,
+    migrate::Migrator,
+    mysql::MySqlPoolOptions,
+    postgres::PgPoolOptions,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
-use station_crawler::run_n02_ingest_cycle;
+use station_crawler::{run_n02_ingest_cycle, N02_INGEST_LOCK_NAME};
 use station_shared::{
     config::{AppConfig, DatabaseType},
     db::{connect_any_pool, SqlDialect},
+    job_lock::acquire_job_lock,
 };
 use tracing::info;
 use validate_ingest::{render_validation_report, validate_ingest, ValidateIngestArgs};
@@ -64,8 +69,21 @@ async fn run() -> Result<ExitCode> {
     match cli.command {
         Commands::Migrate => migrate(&config).await?,
         Commands::ExportSqlite => {
+            // Export shares the ingest lock so SQLite snapshots never race a live ingest.
+            let _lock = acquire_job_lock(
+                &config.job_lock_dir,
+                N02_INGEST_LOCK_NAME,
+                &config.service_name,
+            )
+            .await?;
+            let report = export_sqlite::export_sqlite(&config).await?;
             info!(
-                "export-sqlite is a reserved command. Real export is not implemented in this scaffold."
+                output_path = %report.output_path.display(),
+                source_snapshots = report.source_snapshots,
+                station_identities = report.station_identities,
+                station_versions = report.station_versions,
+                station_change_events = report.station_change_events,
+                "sqlite artifact export complete"
             );
         }
         Commands::ValidateIngest(args) => return run_validate_ingest(&config, args).await,
@@ -90,9 +108,10 @@ async fn migrate(config: &AppConfig) -> Result<()> {
             MYSQL_MIGRATOR.run(&pool).await?;
         }
         DatabaseType::Sqlite => {
-            let pool = SqlitePoolOptions::new()
-                .connect(&config.database_url)
-                .await?;
+            let options = SqliteConnectOptions::from_str(&config.database_url)?
+                .create_if_missing(true)
+                .foreign_keys(true);
+            let pool = SqlitePoolOptions::new().connect_with(options).await?;
             SQLITE_MIGRATOR.run(&pool).await?;
         }
     }
@@ -106,15 +125,53 @@ async fn run_ingest_n02_job(config: &AppConfig, chain_export_sqlite: bool) -> Re
         bail!("--export-sqlite expects DATABASE_TYPE to be postgres or mysql");
     }
 
+    let _ingest_lock = acquire_job_lock(
+        &config.job_lock_dir,
+        N02_INGEST_LOCK_NAME,
+        &config.service_name,
+    )
+    .await?;
     let pool = connect_any_pool(&config.database_url).await?;
     let dialect = SqlDialect::from(&config.database_type);
-    let report = run_n02_ingest_cycle(config, &pool, dialect).await?;
 
-    info!(?report, "ingest-n02 job complete");
+    let report = run_n02_ingest_cycle(config, &pool, dialect).await?;
+    let snapshot_id = report
+        .snapshot_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    info!(
+        source_name = report.source_name,
+        source_version = report.source_version.as_deref().unwrap_or("unknown"),
+        source_url = %report.source_url,
+        source_sha256 = %report.source_sha256,
+        saved_to = %report.saved_to,
+        snapshot_id,
+        parsed_features = report.parsed_features,
+        parsed_stations = report.parsed_stations,
+        created = report.created,
+        updated = report.updated,
+        unchanged = report.unchanged,
+        removed = report.removed,
+        skipped_existing_snapshot = report.skipped_existing_snapshot,
+        load_ms = report.load_ms,
+        save_zip_ms = report.save_zip_ms,
+        extract_ms = report.extract_ms,
+        parse_ms = report.parse_ms,
+        diff_ms = report.diff_ms,
+        persist_ms = report.persist_ms,
+        total_ms = report.total_ms,
+        "ingest-n02 job complete"
+    );
 
     if chain_export_sqlite {
+        let export_report = export_sqlite::export_sqlite(config).await?;
         info!(
-            "ingest completed; --export-sqlite was requested, but SQLite export remains reserved in this scaffold."
+            output_path = %export_report.output_path.display(),
+            source_snapshots = export_report.source_snapshots,
+            station_identities = export_report.station_identities,
+            station_versions = export_report.station_versions,
+            station_change_events = export_report.station_change_events,
+            "ingest-n02 chained sqlite export complete"
         );
     }
 

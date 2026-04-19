@@ -648,8 +648,14 @@ mod tests {
             text_order_sql(SqlDialect::Postgres, "operator_name"),
             "operator_name"
         );
-        assert_eq!(text_order_sql(SqlDialect::Postgres, "line_name"), "line_name");
-        assert_eq!(text_group_sql(SqlDialect::Postgres, "line_name"), "line_name");
+        assert_eq!(
+            text_order_sql(SqlDialect::Postgres, "line_name"),
+            "line_name"
+        );
+        assert_eq!(
+            text_group_sql(SqlDialect::Postgres, "line_name"),
+            "line_name"
+        );
     }
 
     #[tokio::test]
@@ -800,13 +806,10 @@ mod tests {
         )
         .await;
 
-        let response = operator_stations(
-            State(test_state(pool)),
-            Path("小田急電鉄".to_string()),
-        )
-        .await
-        .unwrap()
-        .0;
+        let response = operator_stations(State(test_state(pool)), Path("小田急電鉄".to_string()))
+            .await
+            .unwrap()
+            .0;
         let items = response["items"].as_array().unwrap();
 
         assert_eq!(items.len(), 3);
@@ -927,6 +930,7 @@ mod tests {
                 bind_addr: "127.0.0.1:0".to_string(),
                 database_type: DatabaseType::Sqlite,
                 database_url: "sqlite::memory:".to_string(),
+                job_lock_dir: "tmp/locks".to_string(),
                 redis_url: None,
                 ready_require_cache: false,
                 update_interval_seconds: 0,
@@ -1019,7 +1023,9 @@ mod tests {
         .bind(operator_name)
         .bind(latitude)
         .bind(longitude)
-        .bind(format!("{station_uid}:{snapshot_id}:{line_name}:{station_name}"))
+        .bind(format!(
+            "{station_uid}:{snapshot_id}:{line_name}:{station_name}"
+        ))
         .execute(pool)
         .await
         .unwrap();

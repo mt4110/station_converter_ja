@@ -37,3 +37,9 @@ python3 launcher/quickstart_tui.py --status
 ```
 
 The behavior lives in [`launcher/station_converter_ja.json`](./station_converter_ja.json), so the same TUI can be reused in sibling repos such as `postal_converter_ja` by swapping the config file.
+
+The supported runtime entry points remain explicit:
+
+- `station-api`
+- `station-ops job ingest-n02`
+- `station-ops export-sqlite`

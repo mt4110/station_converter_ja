@@ -11,6 +11,7 @@ pub use n02::{IngestReport, PersistChunkConfig};
 
 pub const DEFAULT_SOURCE_SNAPSHOT_URL: &str =
     "https://nlftp.mlit.go.jp/ksj/gml/data/N02/N02-24/N02-24_GML.zip";
+pub const N02_INGEST_LOCK_NAME: &str = "ingest-n02";
 
 pub async fn run_n02_ingest_cycle(
     config: &AppConfig,
@@ -114,6 +115,7 @@ mod tests {
             bind_addr: "127.0.0.1:0".to_string(),
             database_type: DatabaseType::Sqlite,
             database_url: "sqlite::memory:".to_string(),
+            job_lock_dir: test_dir.join("locks").display().to_string(),
             redis_url: None,
             ready_require_cache: false,
             update_interval_seconds: 60,

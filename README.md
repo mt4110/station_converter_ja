@@ -1,87 +1,87 @@
 # station_converter_ja
 
-High-performance Japanese Station Converter & API. Auto-updating, diff-aware, multi-DB delivery (PostgreSQL / MySQL / SQLite artifact), written in Rust & Next.js.
+全国駅データを自動更新・差分管理する高性能な変換ツール＆APIです。
+PostgreSQL / MySQL を primary write DB にし、SQLite を read-only artifact として配布できます。
+国土数値情報 N02 を取り込み、差分を version / change event として保持しつつ、API と SQLite artifact を提供します。
 
-全国の駅データを自動取得・差分管理し、駅検索 / 路線検索 / 事業者検索 / 近傍検索 API を提供するための雛形です。  
-`postal_converter_ja` と同じ思想で、**Rust の crawler + API**、**Next.js の example frontend**、**Nix flakes + Docker / Collima**、**Terraform 連携**を前提にしています。
+English README: [README_EN.md](README_EN.md)
 
-## 方針
+## まず最初に押さえること
 
-- primary write DB は **PostgreSQL / MySQL**
-- **SQLite は read-only artifact / 配布用途**
-- Redis は **任意キャッシュ**
-- source of truth は **station_versions**（immutable）
-- `stations_latest` は view / projection
-- 駅の `latitude` / `longitude` は **代表点**。原本 geometry は `geometry_geojson` に保持
-- MISE は使わず、**Nix flakes** を使う
-- **NixOS 専用 repo にはしない**。NixOS / macOS / Linux で同じ repo を使う
+この repo は `postal_converter_ja` と同じく、役割をはっきり分けています。
 
-## リポジトリ説明文（GitHub Description）
+- 常駐させるもの: `station-api`
+- scheduler から叩くもの: `station-ops job ingest-n02`
+- artifact までまとめる補助導線: `station-ops job ingest-n02 --export-sqlite`
+- dev 補助モード: `station-crawler --loop`
 
-> High-performance Japanese Station Converter & API. Auto-updating, diff-aware, multi-DB delivery (PostgreSQL / MySQL / SQLite artifact), written in Rust & Next.js.
+本番では `station-crawler` を常駐させません。
+本番 ingest の公式入口は **`station-ops job ingest-n02`** です。
 
-日本語寄せにするなら:
+## 最短セットアップ
 
-> 全国駅データを自動更新・差分管理する Rust 製 Station Converter & API。PostgreSQL / MySQL / SQLite artifact 対応、Next.js example 付き。
+### 1. DB を選ぶ
 
-## 想定ソース
+- PostgreSQL で始める: `postgres`
+- MySQL で始める: `mysql`
+- SQLite で軽く試す: `sqlite`（ローカル確認向け。Docker は起動しません）
 
-- v1 canonical: 国土数値情報 `N02`
-- optional overlay: `N05`（**非商用制限あり**のため opt-in）
-- future overlay: 駅データ.jp など
+本番の primary write DB は PostgreSQL / MySQL を前提にします。以下は PostgreSQL 例です。
 
-現状の crawler は、**国土数値情報 N02 の公式 ZIP に同梱されている UTF-8 `Station.geojson`** を読み込み、
-`source_snapshots` / `station_versions` / `station_change_events` まで反映します。  
-同一駅レコード内の分割線形は自動で束ね、代表点を `latitude` / `longitude` に計算して保持します。
+### 2. env を作って DB を起動する
 
-## 主要ディレクトリ
-
-```text
-station_converter_ja/
-  .github/
-    workflows/
-  artifacts/
-    sqlite/
-  deploy/
-    helm/station-converter-ja/
-    k8s/base/
-    argocd/
-  docs/
-  frontend/
-  infra/
-    terraform/
-      modules/
-      platforms/aws/
-      platforms/gcp/
-      platforms/azure/
-  launcher/
-  scripts/
-  storage/
-    migrations/
-      postgres/
-      mysql/
-      sqlite/
-    schema/
-    sqlite/
-  worker/
-    shared/
-    api/
-    crawler/
-    ops/
+```bash
+./scripts/setup_nix_docker.sh postgres
 ```
 
-## ローカルポート
+これは次をまとめて行います。
+
+- `worker/api/.env`
+- `worker/crawler/.env`
+- `worker/ops/.env`
+- `frontend/.env.local`
+- `storage/locks`
+- `storage/sqlite`
+- `worker/crawler/temp_assets`
+- `docker compose up -d postgres`
+
+Rust 側のコマンドは、repo root から起動すると `worker/*/.env` を自動読込します。
+
+### 3. 開発 shell に入る
+
+```bash
+nix develop
+```
+
+### 4. migrate -> ingest -> export を通す
+
+```bash
+cargo run -p station-ops -- migrate
+cargo run -p station-ops -- job ingest-n02 --export-sqlite
+```
+
+ここまでで次が揃います。
+
+- primary write DB に N02 データを反映
+- `storage/sqlite/stations.sqlite3` を生成
+
+### 5. API を起動する
+
+```bash
+cargo run -p station-api
+```
+
+既定ポート:
 
 - API: `3212`
 - Frontend: `3213`
 - MySQL: `3214`
 - PostgreSQL: `3215`
 - Redis: `3216`
-- DB Web (Adminer): `3217`
 
 `postal_converter_ja` とポート帯をずらしてあるので、同時に立ち上げても衝突しにくいです。
 
-## クイックスタート
+## クイックスタート TUI
 
 まず TUI から触るなら:
 
@@ -89,89 +89,13 @@ station_converter_ja/
 python3 launcher/quickstart_tui.py
 ```
 
-`Quick Start` で env 準備、migrate、ingest、validate-ingest、DB Web、API、Sample Web をまとめて立ち上げられます。  
-各項目は個別にも start / stop でき、選択中の項目の直近ログと直近の実行時刻をそのまま見られます。  
-`Quick Start` 実行中は、右ペインで現在の step と経過時間を見られます。  
-`v` で validate mode を `standard / strict` に切り替えられ、`x` で実行中の workflow をその場でキャンセルできます。  
+`Quick Start` で env 準備、migrate、ingest、validate-ingest、DB Web、API、Sample Web をまとめて立ち上げられます。
+各項目は個別にも start / stop でき、選択中の項目の直近ログと直近の実行時刻をそのまま見られます。
+`Quick Start` 実行中は、右ペインで現在の step と経過時間を見られます。
+`v` で validate mode を `standard / strict` に切り替えられ、`x` で実行中の workflow をその場でキャンセルできます。
 `l` で英語 / 日本語を切り替えられ、右ペインに「最短で進める順番」の Tips も常に出ます。
 
-### 1. DB 起動
-
-```bash
-docker compose up -d
-docker compose --profile cache up -d redis
-```
-
-macOS + Collima の例:
-
-```bash
-colima start
-docker context use colima
-docker compose up -d
-```
-
-### 2. env 配置
-
-```bash
-cp worker/api/.env.example worker/api/.env
-cp worker/crawler/.env.example worker/crawler/.env
-cp worker/ops/.env.example worker/ops/.env
-cp frontend/.env.local.example frontend/.env.local
-```
-
-### 3. Nix shell
-
-```bash
-nix develop
-```
-
-### 4. migrate
-
-```bash
-cargo run -p station-ops -- migrate
-```
-
-### 5. Ingest
-
-```bash
-cargo run -p station-ops -- job ingest-n02
-```
-
-PostgreSQL / MySQL で将来の artifact 導線まで同じ入口に寄せたい場合:
-
-```bash
-cargo run -p station-ops -- job ingest-n02 --export-sqlite
-```
-
-現時点では `--export-sqlite` は受け付けますが、SQLite export 自体はまだ scaffold 段階です。
-
-ローカルの fixture / ZIP を意図的に ingest したいときだけ、`ALLOW_LOCAL_SOURCE_SNAPSHOT=true` を付けてください。
-
-### 6. validate-ingest
-
-```bash
-cargo run -p station-ops -- validate-ingest
-```
-
-JSON が欲しいときは `--json`、warning も failure 扱いにしたいときは `--strict` を付けてください。
-
-### 7. API
-
-```bash
-cargo run -p station-api
-```
-
-bulk persistence の chunk size は env で比較できます。
-
-```bash
-INGEST_WRITE_CHUNK_SIZE=1000
-INGEST_CLOSE_CHUNK_SIZE=1000
-```
-
-`INGEST_WRITE_CHUNK_SIZE` は identity / version / change_event の batch size、`INGEST_CLOSE_CHUNK_SIZE` は stale version close update の chunk size です。
-env を省略したときの default は DB ごとに分かれており、現在は PostgreSQL / SQLite が `1000`、MySQL が `200` です。
-
-### 8. Frontend
+### 6. Frontend 例を触る
 
 ```bash
 cd frontend
@@ -186,6 +110,16 @@ DB をブラウザで見たいときは、TUI の `DB Web UI` を使うか、次
 ```bash
 docker compose --profile dbweb up -d adminer
 ```
+
+## validate-ingest
+
+ingest 後の acceptance check は次で回せます。
+
+```bash
+cargo run -p station-ops -- validate-ingest
+```
+
+JSON が欲しいときは `--json`、warning も failure 扱いにしたいときは `--strict` を付けてください。
 
 ## Ingest Baseline
 
@@ -207,7 +141,7 @@ docker compose --profile dbweb up -d adminer
   - `persist_ms=4`
   - `total_ms=952`
 
-同日の比較で、bulk persistence 導入前の fresh PostgreSQL initial ingest は `persist_ms=10091`, `total_ms=12044` でした。  
+同日の比較で、bulk persistence 導入前の fresh PostgreSQL initial ingest は `persist_ms=10091`, `total_ms=12044` でした。
 つまり、支配的だった persist が大きく落ち、最適化の主目的は達成できています。
 
 同じ local ZIP を使った chunk size sweep:
@@ -222,45 +156,133 @@ docker compose --profile dbweb up -d adminer
 
 2026-04-19 時点のローカル MySQL 実測:
 
-- same local ZIP + fresh MySQL initial ingest:
-
 | write chunk | persist_ms | total_ms |
 | --- | ---: | ---: |
 | `200` | `574` | `1384` |
 | `500` | `627` | `1455` |
 | `1000` | `632` | `1465` |
 
-この比較では MySQL は `200` が最良でした。  
+この比較では MySQL は `200` が最良でした。
 そのため env 未指定時の default は **PostgreSQL / SQLite = `1000`、MySQL = `200`** にしています。
 
-MySQL では default collation が text distinct を 1 件つぶすことがあったため、`validate-ingest` の distinct line / operator count は bytewise semantics に寄せて cross-DB で揃えています。  
-同じ理由で API の `stations/search` / `lines/{line_name}/stations` / `operators/{operator_name}/stations` も MySQL では binary collation を使い、`の` と `ノ` のような別名が混ざらないようにしています。  
+MySQL では default collation が text distinct を 1 件つぶすことがあったため、`validate-ingest` の distinct line / operator count は bytewise semantics に寄せて cross-DB で揃えています。
+同じ理由で API の `stations/search` / `lines/{line_name}/stations` / `operators/{operator_name}/stations` も MySQL では binary collation を使い、`の` と `ノ` のような別名が混ざらないようにしています。
 いずれの数値も local machine の reference 値であり、別マシンや別ストレージ条件での最適値を保証するものではありません。
 
 ## Example frontend
 
-`postal_converter_ja` と同じノリで、導入サンプルを置く前提です。
+- `/examples/station-search` - 駅名検索
+- `/examples/address-search` - 住所 / 市区町村から近い駅候補
+- `/examples/line-search` - 路線から駅一覧
+- `/examples/operator-search` - 事業者から駅一覧
+- `/examples/nearby-search` - 緯度経度から近くの駅
 
-- `/examples/station-search` — 駅名検索
-- `/examples/address-search` — 住所 / 市区町村から近い駅候補
-- `/examples/line-search` — 路線から駅一覧
-- `/examples/operator-search` — 事業者から駅一覧
-- `/examples/nearby-search` — 緯度経度から近くの駅
+## 本番運用の導線
 
-## `.github` 方針
+### Self-hosted の標準形
 
-コミュニティヘルス系は `mt4110/.github` に寄せ、**repo local には workflow だけ置く**前提です。  
-この repo には `.github/workflows/` だけ置いています。
+- resident service: `station-api`
+- scheduled job: `station-ops job ingest-n02`
+- optional chained job: `station-ops job ingest-n02 --export-sqlite`
 
-## まだやっていないこと
+`external scheduler` でも `systemd timer` でも、この one-shot job を呼ぶ形に揃えます。
 
-この雛形は **repo bootstrap** です。  
-やっていないもの:
+### systemd を使う場合
+
+実ファイルを [`deploy/systemd/`](deploy/systemd/) に置いてあります。
+
+- `station-converter-ja-api.service`
+- `station-converter-ja-ingest-n02.service`
+- `station-converter-ja-ingest-n02.timer`
+- `station-converter-ja.env.example`
+
+`/opt/station_converter_ja/target/release/` に置く binary は次で揃えられます。
+
+```bash
+sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-converter-ja station-converter-ja
+```
+
+セットアップ手順と運用 runbook は [`docs/OPERATIONS.md`](docs/OPERATIONS.md) を参照してください。
+
+## Verify / Release
+
+静的チェックと DB 実経路の確認:
+
+```bash
+./scripts/verify_repo.sh
+./scripts/verify_ingest_export.sh postgres
+./scripts/verify_ingest_export.sh mysql
+cd frontend && npm ci && npm run build
+```
+
+SQLite artifact を配布物として固める:
+
+```bash
+./scripts/release_sqlite_artifact.sh postgres
+```
+
+GitHub Release までまとめて公開する:
+
+```bash
+./scripts/publish_sqlite_release.sh postgres v0.1.1
+```
+
+配布物は `artifacts/sqlite/` に出力されます。
+
+## Docs
+
+- [docs/OPERATIONS.md](docs/OPERATIONS.md)
+  - production runbook
+  - systemd 導線
+  - 更新時 / 障害時の扱い
+- [docs/DATABASE.md](docs/DATABASE.md)
+  - table 構造
+  - 軽い sample dump
+  - example SQL
+- [docs/RELEASE.md](docs/RELEASE.md)
+  - artifact / release 手順
+  - verify scripts
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+  - runtime 責務分離
+  - lock 方針
+- [docs/DEPLOY.md](docs/DEPLOY.md)
+  - self-hosted / cloud skeleton の位置づけ
+
+## データ方針
+
+- primary write DB は **PostgreSQL / MySQL**
+- **SQLite は read-only artifact**
+- source of truth は **`station_versions`**
+- `stations_latest` は view / projection
+- `latitude` / `longitude` は代表点
+- raw geometry は `geometry_geojson` に保持
+
+現状の crawler は、国土数値情報 N02 の公式 ZIP に同梱される UTF-8 `Station.geojson` を読み込み、
+`source_snapshots` / `station_versions` / `station_change_events` まで反映します。
+
+`stations/search` / `lines/{line_name}/stations` / `operators/{operator_name}/stations` は cross-DB semantics を揃えており、MySQL でも `江の島線` と `江ノ島線`、`の` と `ノ` のような別値が混ざらないようにしています。
+
+つまり、この repo はもう空箱ではありません。
+N02 one-shot ingest、`created / updated / removed` の初期差分反映、SQLite artifact export、
+API、運用導線まで揃った v1 の実働基盤です。ここから overlay、OpenAPI、cloud deploy を積み増していく前提です。
+
+## いま含めているもの / まだ含めていないもの
+
+含めているもの:
+
+- N02 one-shot ingest
+- `created / updated / removed` の初期差分反映
+- PostgreSQL / MySQL / SQLite artifact 対応
+- example frontend
+- self-hosted systemd 導線
+
+まだ含めていないもの:
 
 - N05 overlay parser
-- SQLite export 本実装
-- Terraform の本番 resource 実装
 - production-ready OpenAPI
+- cloud resource の本実装
 
-ただし、v1 の土台として必要な **N02 station ingest と created / updated / removed の初期差分反映** は入っています。  
-つまり、**もう空箱ではない。ここから機能を増やしていける状態**です。
+## License
+
+この repo は **MIT OR Apache-2.0** の dual license です。
+利用者は [`LICENSE-MIT`](LICENSE-MIT) または [`LICENSE-APACHE`](LICENSE-APACHE) を選べます。
