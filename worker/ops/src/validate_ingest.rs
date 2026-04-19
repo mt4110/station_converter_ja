@@ -8,7 +8,7 @@ use sqlx::{any::AnyRow, AnyPool, Row};
 use station_shared::db::SqlDialect;
 
 const SOURCE_NAME: &str = "ksj_n02_station";
-const STATION_UID_LIKE_PATTERN: &str = "stn_n02_%";
+const STATION_UID_PREFIX: &str = "stn_n02_";
 
 const DEFAULT_MIN_STATIONS: i64 = 10_000;
 const DEFAULT_MIN_LINES: i64 = 500;
@@ -297,7 +297,7 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
            {} AS out_of_range_coordinate_count,
            {} AS suspicious_coordinate_count
          FROM stations_latest
-         WHERE station_uid LIKE ?",
+         WHERE substr(station_uid, 1, 8) = ?",
         integer_aggregate_sql(dialect, "COUNT(*)"),
         integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "line_name")),
         integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "operator_name")),
@@ -331,7 +331,7 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
         .bind(WARN_MAX_LATITUDE)
         .bind(WARN_MIN_LONGITUDE)
         .bind(WARN_MAX_LONGITUDE)
-        .bind(STATION_UID_LIKE_PATTERN)
+        .bind(STATION_UID_PREFIX)
         .fetch_one(pool)
         .await?;
 
@@ -363,14 +363,14 @@ async fn fetch_duplicate_station_uid_count(pool: &AnyPool, dialect: SqlDialect) 
          FROM (
            SELECT station_uid
            FROM stations_latest
-           WHERE station_uid LIKE ?
+           WHERE substr(station_uid, 1, 8) = ?
            GROUP BY station_uid
            HAVING COUNT(*) > 1
          ) duplicate_station_uids",
         integer_aggregate_sql(dialect, "COUNT(*)"),
     );
     let row = sqlx::query(&dialect.statement(&sql))
-        .bind(STATION_UID_LIKE_PATTERN)
+        .bind(STATION_UID_PREFIX)
         .fetch_one(pool)
         .await?;
 
@@ -389,7 +389,7 @@ async fn fetch_change_summary(
            {} AS removed_count
          FROM station_change_events
          WHERE snapshot_id = ?
-           AND station_uid LIKE ?",
+           AND substr(station_uid, 1, 8) = ?",
         integer_aggregate_sql(
             dialect,
             "SUM(CASE WHEN change_kind = 'created' THEN 1 ELSE 0 END)"
@@ -405,7 +405,7 @@ async fn fetch_change_summary(
     );
     let counts = sqlx::query(&dialect.statement(&counts_sql))
         .bind(snapshot_id)
-        .bind(STATION_UID_LIKE_PATTERN)
+        .bind(STATION_UID_PREFIX)
         .fetch_one(pool)
         .await?;
 
@@ -413,12 +413,12 @@ async fn fetch_change_summary(
         "SELECT {} AS latest_snapshot_version_count
          FROM station_versions
          WHERE snapshot_id = ?
-           AND station_uid LIKE ?",
+           AND substr(station_uid, 1, 8) = ?",
         integer_aggregate_sql(dialect, "COUNT(*)"),
     );
     let latest_versions = sqlx::query(&dialect.statement(&latest_versions_sql))
         .bind(snapshot_id)
-        .bind(STATION_UID_LIKE_PATTERN)
+        .bind(STATION_UID_PREFIX)
         .fetch_one(pool)
         .await?;
 
@@ -881,6 +881,59 @@ mod tests {
                 .status,
             ValidationStatus::Failed
         );
+    }
+
+    #[tokio::test]
+    async fn validate_ingest_ignores_non_n02_station_uid_shapes() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 1, "https://example.com/N02-24_GML.zip").await;
+        insert_identity(&pool, "stn_n02_real", "新宿").await;
+        insert_station_version(
+            &pool,
+            1,
+            StationVersionSeed::new("stn_n02_real", "新宿", "京王線", "京王電鉄", 35.69, 139.70),
+        )
+        .await;
+        insert_change_event(&pool, 1, "stn_n02_real", "created").await;
+
+        insert_identity(&pool, "stnXn02Ynoise", "ノイズ駅").await;
+        insert_station_version(
+            &pool,
+            1,
+            StationVersionSeed::new(
+                "stnXn02Ynoise",
+                "ノイズ駅",
+                "ノイズ線",
+                "ノイズ交通",
+                35.60,
+                139.60,
+            ),
+        )
+        .await;
+        insert_change_event(&pool, 1, "stnXn02Ynoise", "created").await;
+
+        let report = validate_ingest(
+            &pool,
+            SqlDialect::Sqlite,
+            &ValidateIngestArgs {
+                min_stations: 2,
+                min_lines: 2,
+                min_operators: 2,
+                ..ValidateIngestArgs::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let min_station_check = report
+            .checks
+            .iter()
+            .find(|check| check.name == "min_station_count")
+            .unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Failed);
+        assert_eq!(min_station_check.status, ValidationStatus::Failed);
+        assert_eq!(min_station_check.observed, json!(1));
     }
 
     async fn test_pool() -> AnyPool {

@@ -80,7 +80,7 @@ export type DatasetStatus = {
   active_station_count: number | null;
   distinct_station_name_count: number | null;
   distinct_line_count: number | null;
-  active_snapshot_count: number | null;
+  active_version_snapshot_count: number | null;
   active_snapshot: {
     id?: number | null;
     source_version?: string | null;
@@ -121,7 +121,7 @@ async function probeLegacyDatasetStatus() {
     active_station_count: null,
     distinct_station_name_count: null,
     distinct_line_count: null,
-    active_snapshot_count: null,
+    active_version_snapshot_count: null,
     active_snapshot: null
   } satisfies DatasetStatus;
 }

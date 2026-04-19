@@ -100,8 +100,10 @@ impl AppConfig {
             Some(value) => value,
             None => default_ingest_write_chunk_size(&database_type),
         };
-        let ingest_close_chunk_size =
-            env_usize_optional("INGEST_CLOSE_CHUNK_SIZE")?.unwrap_or(1000);
+        let ingest_close_chunk_size = match env_usize_optional("INGEST_CLOSE_CHUNK_SIZE")? {
+            Some(value) => value,
+            None => default_ingest_close_chunk_size(&database_type),
+        };
 
         Ok(Self {
             service_name: service_name.to_string(),
@@ -140,8 +142,16 @@ fn env_usize_optional(name: &str) -> Result<Option<usize>> {
 
 fn default_ingest_write_chunk_size(database_type: &DatabaseType) -> usize {
     match database_type {
-        DatabaseType::Postgres | DatabaseType::Sqlite => 1000,
+        DatabaseType::Postgres => 1000,
         DatabaseType::Mysql => 200,
+        DatabaseType::Sqlite => 76,
+    }
+}
+
+fn default_ingest_close_chunk_size(database_type: &DatabaseType) -> usize {
+    match database_type {
+        DatabaseType::Postgres | DatabaseType::Mysql => 1000,
+        DatabaseType::Sqlite => 998,
     }
 }
 

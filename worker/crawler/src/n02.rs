@@ -19,6 +19,9 @@ const STATION_UID_PREFIX: &str = "stn_n02_";
 const STATION_GEOJSON_PATH: &str = "UTF-8/N02-24_Station.geojson";
 const DEFAULT_INGEST_WRITE_CHUNK_SIZE: usize = 1_000;
 const DEFAULT_INGEST_CLOSE_CHUNK_SIZE: usize = 1_000;
+const SQLITE_MAX_VARIABLE_NUMBER: usize = 999;
+const SQLITE_SAFE_WRITE_CHUNK_SIZE: usize = SQLITE_MAX_VARIABLE_NUMBER / 13;
+const SQLITE_SAFE_CLOSE_CHUNK_SIZE: usize = SQLITE_MAX_VARIABLE_NUMBER - 1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PersistChunkConfig {
@@ -39,12 +42,27 @@ impl PersistChunkConfig {
     pub fn for_dialect(dialect: SqlDialect) -> Self {
         let write_chunk_size = match dialect {
             SqlDialect::Mysql => 200,
-            SqlDialect::Postgres | SqlDialect::Sqlite => DEFAULT_INGEST_WRITE_CHUNK_SIZE,
+            SqlDialect::Postgres => DEFAULT_INGEST_WRITE_CHUNK_SIZE,
+            SqlDialect::Sqlite => SQLITE_SAFE_WRITE_CHUNK_SIZE,
+        };
+        let close_chunk_size = match dialect {
+            SqlDialect::Postgres | SqlDialect::Mysql => DEFAULT_INGEST_CLOSE_CHUNK_SIZE,
+            SqlDialect::Sqlite => SQLITE_SAFE_CLOSE_CHUNK_SIZE,
         };
 
         Self {
             write_chunk_size,
-            close_chunk_size: DEFAULT_INGEST_CLOSE_CHUNK_SIZE,
+            close_chunk_size,
+        }
+    }
+
+    pub fn clamp_for_dialect(self, dialect: SqlDialect) -> Self {
+        match dialect {
+            SqlDialect::Sqlite => Self {
+                write_chunk_size: self.write_chunk_size.min(SQLITE_SAFE_WRITE_CHUNK_SIZE),
+                close_chunk_size: self.close_chunk_size.min(SQLITE_SAFE_CLOSE_CHUNK_SIZE),
+            },
+            SqlDialect::Postgres | SqlDialect::Mysql => self,
         }
     }
 }
@@ -222,6 +240,7 @@ pub async fn ingest_snapshot_with_config(
     zip_bytes: &[u8],
     chunk_config: PersistChunkConfig,
 ) -> Result<IngestReport> {
+    let chunk_config = chunk_config.clamp_for_dialect(dialect);
     let total_start = Instant::now();
     let source_sha256 = sha256_hex(zip_bytes);
     let parsed_snapshot = parse_snapshot_timed(zip_bytes, source_url)?;
@@ -1279,6 +1298,26 @@ mod tests {
     use sqlx::{any::AnyPoolOptions, Row};
     use station_shared::db::ensure_sqlx_drivers;
     use zip::{write::SimpleFileOptions, ZipWriter};
+
+    #[test]
+    fn sqlite_chunk_defaults_stay_within_bind_limit() {
+        let chunk_config = PersistChunkConfig::for_dialect(SqlDialect::Sqlite);
+
+        assert_eq!(chunk_config.write_chunk_size, SQLITE_SAFE_WRITE_CHUNK_SIZE);
+        assert_eq!(chunk_config.close_chunk_size, SQLITE_SAFE_CLOSE_CHUNK_SIZE);
+    }
+
+    #[test]
+    fn sqlite_chunk_overrides_are_clamped() {
+        let chunk_config = PersistChunkConfig {
+            write_chunk_size: 1_000,
+            close_chunk_size: 1_000,
+        }
+        .clamp_for_dialect(SqlDialect::Sqlite);
+
+        assert_eq!(chunk_config.write_chunk_size, SQLITE_SAFE_WRITE_CHUNK_SIZE);
+        assert_eq!(chunk_config.close_chunk_size, SQLITE_SAFE_CLOSE_CHUNK_SIZE);
+    }
 
     #[test]
     fn groups_duplicate_segments_into_one_station() {

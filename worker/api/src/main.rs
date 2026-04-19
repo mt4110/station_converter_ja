@@ -17,6 +17,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, info};
 
 const FULL_DATASET_MIN_STATION_COUNT: i64 = 10_000;
+const N02_SOURCE_NAME: &str = "ksj_n02_station";
 
 #[derive(Clone)]
 struct AppState {
@@ -191,8 +192,7 @@ async fn dataset_status(
            {} AS active_station_count,
            {} AS distinct_station_name_count,
            {} AS distinct_line_count,
-           {} AS active_snapshot_count,
-           {} AS active_snapshot_id
+           {} AS active_version_snapshot_count
          FROM stations_latest",
         integer_aggregate_sql(state.dialect, "COUNT(*)"),
         integer_aggregate_sql(
@@ -204,7 +204,6 @@ async fn dataset_status(
             &distinct_text_count_sql(state.dialect, "line_name"),
         ),
         integer_aggregate_sql(state.dialect, "COUNT(DISTINCT snapshot_id)"),
-        nullable_integer_aggregate_sql(state.dialect, "MIN(snapshot_id)"),
     );
     let counts = sqlx::query(&state.dialect.statement(&counts_sql))
         .fetch_one(&state.pool)
@@ -220,35 +219,28 @@ async fn dataset_status(
     let distinct_line_count = counts
         .try_get::<i64, _>("distinct_line_count")
         .map_err(internal_error)?;
-    let active_snapshot_count = counts
-        .try_get::<i64, _>("active_snapshot_count")
-        .map_err(internal_error)?;
-    let active_snapshot_id = counts
-        .try_get::<Option<i64>, _>("active_snapshot_id")
+    let active_version_snapshot_count = counts
+        .try_get::<i64, _>("active_version_snapshot_count")
         .map_err(internal_error)?;
 
-    let active_snapshot = match active_snapshot_id {
-        Some(snapshot_id) => {
-            let row = sqlx::query(&state.dialect.statement(
-                "SELECT id, source_version, source_url
-                 FROM source_snapshots
-                 WHERE id = ?",
-            ))
-            .bind(snapshot_id)
-            .fetch_optional(&state.pool)
-            .await
-            .map_err(internal_error)?;
-
-            row.map(|row| {
-                json!({
-                    "id": row.try_get::<i64, _>("id").ok(),
-                    "source_version": decode_optional_string(&row, "source_version").ok().flatten(),
-                    "source_url": decode_required_string(&row, "source_url").ok(),
-                })
-            })
-        }
-        None => None,
-    };
+    let active_snapshot = sqlx::query(&state.dialect.statement(
+        "SELECT id, source_version, source_url
+         FROM source_snapshots
+         WHERE source_name = ?
+         ORDER BY id DESC
+         LIMIT 1",
+    ))
+    .bind(N02_SOURCE_NAME)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(internal_error)?
+    .map(|row| {
+        json!({
+            "id": row.try_get::<i64, _>("id").ok(),
+            "source_version": decode_optional_string(&row, "source_version").ok().flatten(),
+            "source_url": decode_required_string(&row, "source_url").ok(),
+        })
+    });
 
     let source_url = active_snapshot
         .as_ref()
@@ -267,7 +259,7 @@ async fn dataset_status(
         "active_station_count": active_station_count,
         "distinct_station_name_count": distinct_station_name_count,
         "distinct_line_count": distinct_line_count,
-        "active_snapshot_count": active_snapshot_count,
+        "active_version_snapshot_count": active_version_snapshot_count,
         "active_snapshot": active_snapshot,
     })))
 }
@@ -570,9 +562,10 @@ mod tests {
     };
 
     use super::{
-        distinct_text_count_sql, integer_aggregate_sql, line_catalog, line_stations,
-        nullable_integer_aggregate_sql, operator_stations, search_stations, text_equals_sql,
-        text_group_sql, text_like_sql, text_order_sql, AppState, SearchParams,
+        dataset_status, distinct_text_count_sql, integer_aggregate_sql, line_catalog,
+        line_stations, nullable_integer_aggregate_sql, operator_stations, search_stations,
+        text_equals_sql, text_group_sql, text_like_sql, text_order_sql, AppState, SearchParams,
+        N02_SOURCE_NAME,
     };
 
     #[test]
@@ -946,6 +939,49 @@ mod tests {
         }));
     }
 
+    #[tokio::test]
+    async fn dataset_status_uses_latest_n02_snapshot_metadata() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 24).await;
+        insert_snapshot(&pool, 25).await;
+        insert_station(
+            &pool,
+            24,
+            StationSeed::new(
+                "stn_shinjuku",
+                "新宿",
+                "中央線",
+                "東日本旅客鉄道",
+                35.6900,
+                139.7000,
+            ),
+        )
+        .await;
+        insert_station(
+            &pool,
+            25,
+            StationSeed::new(
+                "stn_shibuya",
+                "渋谷",
+                "山手線",
+                "東日本旅客鉄道",
+                35.6580,
+                139.7016,
+            ),
+        )
+        .await;
+
+        let response = dataset_status(State(test_state(pool))).await.unwrap().0;
+
+        assert_eq!(response["active_station_count"].as_i64(), Some(2));
+        assert_eq!(response["active_version_snapshot_count"].as_i64(), Some(2));
+        assert_eq!(response["active_snapshot"]["id"].as_i64(), Some(25));
+        assert_eq!(
+            response["active_snapshot"]["source_version"].as_str(),
+            Some("N02-25")
+        );
+    }
+
     fn test_state(pool: AnyPool) -> AppState {
         AppState {
             config: AppConfig {
@@ -996,10 +1032,10 @@ mod tests {
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
-        .bind("mlit_n02")
+        .bind(N02_SOURCE_NAME)
         .bind("geojson_zip_entry")
-        .bind("N02-24")
-        .bind("https://example.com/N02-24_GML.zip")
+        .bind(format!("N02-{id}"))
+        .bind(format!("https://example.com/N02-{id}_GML.zip"))
         .bind(format!("sha-{id}"))
         .execute(pool)
         .await
