@@ -26,6 +26,10 @@ Readiness check.
 }
 ```
 
+### GET `/v1/dataset/status`
+
+現在アクティブな駅データ件数と、sample web を出してよい状態かどうかを返す。
+
 ### GET `/v1/stations/search?q=新宿&limit=10`
 
 駅名の前方一致 / 部分一致検索。

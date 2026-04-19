@@ -3,9 +3,9 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
   getDatasetStatus,
-  searchNearbyStations,
+  listOperatorStations,
   type DatasetStatus,
-  type NearbyStationsResponse
+  type OperatorStationsResponse
 } from "../../../src/lib/station-sdk";
 import {
   DatasetBanner,
@@ -16,10 +16,9 @@ import {
   StatusNotice
 } from "../../../src/components/station-example-ui";
 
-export default function NearbySearchPage() {
-  const [lat, setLat] = useState("35.6895");
-  const [lng, setLng] = useState("139.6917");
-  const [result, setResult] = useState<NearbyStationsResponse | null>(null);
+export default function OperatorSearchPage() {
+  const [operatorName, setOperatorName] = useState("東日本旅客鉄道");
+  const [result, setResult] = useState<OperatorStationsResponse | null>(null);
   const [dataset, setDataset] = useState<DatasetStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [datasetLoading, setDatasetLoading] = useState(true);
@@ -38,14 +37,14 @@ export default function NearbySearchPage() {
     }
   }
 
-  async function runSearch(nextLat: string, nextLng: string) {
+  async function runLookup(nextOperatorName: string) {
     setLoading(true);
     setError(null);
 
     try {
-      setResult(await searchNearbyStations(Number(nextLat), Number(nextLng)));
+      setResult(await listOperatorStations(nextOperatorName));
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "近傍検索に失敗しました。");
+      setError(nextError instanceof Error ? nextError.message : "事業者検索に失敗しました。");
       setResult(null);
     } finally {
       setLoading(false);
@@ -57,7 +56,7 @@ export default function NearbySearchPage() {
     if (!datasetReady) {
       return;
     }
-    await runSearch(lat, lng);
+    await runLookup(operatorName);
   }
 
   useEffect(() => {
@@ -69,55 +68,41 @@ export default function NearbySearchPage() {
       setResult(null);
       return;
     }
-    void runSearch("35.6895", "139.6917");
+    void runLookup("東日本旅客鉄道");
   }, [datasetReady]);
 
   return (
     <ExamplePage
-      title="近くの駅検索"
-      description="住所や物件座標から、実際に近い駅候補を先に洗い出すための画面です。"
-      activeHref="/examples/nearby-search"
+      title="事業者から駅一覧"
+      description="広域の比較検討で、同じ事業者が持つ駅のまとまりをひと息で見渡すための画面です。"
+      activeHref="/examples/operator-search"
       image={{
-        src: "https://unsplash.com/photos/LAShlHKT390/download?force=true&w=1600",
-        alt: "駅の案内サイン"
+        src: "https://unsplash.com/photos/g16j5iIQ1Uc/download?force=true&w=1600",
+        alt: "街の中に広がる駅周辺の風景"
       }}
     >
       <DatasetBanner dataset={dataset} loading={datasetLoading} />
-      <SearchBand title="座標から探す" detail="緯度経度から近い駅候補をまとめて返します。">
-        <form
-          onSubmit={onSubmit}
-          style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}
-        >
+      <SearchBand title="事業者から探す" detail="事業者ごとの駅を、路線順にまとめて見ます。">
+        <form onSubmit={onSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input
-            value={lat}
-            onChange={(e) => setLat(e.target.value)}
+            value={operatorName}
+            onChange={(e) => setOperatorName(e.target.value)}
             disabled={!datasetReady}
             style={{
+              flex: "1 1 320px",
               minHeight: 52,
               padding: "0 14px",
               border: "1px solid #b7c7a2",
               borderRadius: 8,
               background: datasetReady ? "#ffffff" : "#f3f4f6"
             }}
-            placeholder="latitude"
-          />
-          <input
-            value={lng}
-            onChange={(e) => setLng(e.target.value)}
-            disabled={!datasetReady}
-            style={{
-              minHeight: 52,
-              padding: "0 14px",
-              border: "1px solid #b7c7a2",
-              borderRadius: 8,
-              background: datasetReady ? "#ffffff" : "#f3f4f6"
-            }}
-            placeholder="longitude"
+            placeholder="事業者名を入力"
           />
           <button
             type="submit"
             disabled={!datasetReady || loading}
             style={{
+              minWidth: 140,
               minHeight: 52,
               padding: "0 18px",
               borderRadius: 8,
@@ -127,26 +112,26 @@ export default function NearbySearchPage() {
               fontWeight: 700
             }}
           >
-            周辺駅を表示
+            一覧表示
           </button>
         </form>
       </SearchBand>
 
       <div style={{ marginTop: 18 }} />
       {!datasetReady && !datasetLoading ? (
-        <StatusNotice tone="warning">全国駅データが揃うまで周辺検索は停止します。</StatusNotice>
+        <StatusNotice tone="warning">全国駅データが揃うまで事業者一覧は停止します。</StatusNotice>
       ) : null}
-      {loading ? <StatusNotice>近くの駅を検索しています。</StatusNotice> : null}
+      {loading ? <StatusNotice>事業者データを取得しています。</StatusNotice> : null}
       {error ? <StatusNotice tone="error">{error}</StatusNotice> : null}
       {result ? (
         <>
           <ResultSummary
-            primary={`(${result.query.lat.toFixed(4)}, ${result.query.lng.toFixed(4)}) 付近 ${result.items.length.toLocaleString()}件`}
-            secondary="代表点ベースで近い順に返しています。"
+            primary={`「${result.operator_name}」の駅一覧 ${result.items.length.toLocaleString()}件`}
+            secondary="路線ごとのまとまりを崩さずに確認できます。"
           />
           <StationList
             items={result.items}
-            emptyMessage="周辺駅は見つかりませんでした。"
+            emptyMessage={`「${result.operator_name}」に該当する駅は見つかりませんでした。`}
           />
         </>
       ) : null}

@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     io::{Cursor, Read},
+    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -16,6 +17,37 @@ const SOURCE_NAME: &str = "ksj_n02_station";
 const SOURCE_KIND: &str = "geojson_zip_entry";
 const STATION_UID_PREFIX: &str = "stn_n02_";
 const STATION_GEOJSON_PATH: &str = "UTF-8/N02-24_Station.geojson";
+const DEFAULT_INGEST_WRITE_CHUNK_SIZE: usize = 1_000;
+const DEFAULT_INGEST_CLOSE_CHUNK_SIZE: usize = 1_000;
+
+#[derive(Clone, Copy, Debug)]
+pub struct PersistChunkConfig {
+    pub write_chunk_size: usize,
+    pub close_chunk_size: usize,
+}
+
+impl Default for PersistChunkConfig {
+    fn default() -> Self {
+        Self {
+            write_chunk_size: DEFAULT_INGEST_WRITE_CHUNK_SIZE,
+            close_chunk_size: DEFAULT_INGEST_CLOSE_CHUNK_SIZE,
+        }
+    }
+}
+
+impl PersistChunkConfig {
+    pub fn for_dialect(dialect: SqlDialect) -> Self {
+        let write_chunk_size = match dialect {
+            SqlDialect::Mysql => 200,
+            SqlDialect::Postgres | SqlDialect::Sqlite => DEFAULT_INGEST_WRITE_CHUNK_SIZE,
+        };
+
+        Self {
+            write_chunk_size,
+            close_chunk_size: DEFAULT_INGEST_CLOSE_CHUNK_SIZE,
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 pub struct IngestReport {
@@ -32,6 +64,13 @@ pub struct IngestReport {
     pub unchanged: usize,
     pub removed: usize,
     pub skipped_existing_snapshot: bool,
+    pub load_ms: u64,
+    pub save_zip_ms: u64,
+    pub extract_ms: u64,
+    pub parse_ms: u64,
+    pub diff_ms: u64,
+    pub persist_ms: u64,
+    pub total_ms: u64,
 }
 
 #[derive(Debug)]
@@ -39,6 +78,13 @@ struct ParsedSnapshot {
     source_version: Option<String>,
     parsed_features: usize,
     stations: Vec<ParsedStation>,
+}
+
+#[derive(Debug)]
+struct TimedParsedSnapshot {
+    snapshot: ParsedSnapshot,
+    extract_ms: u64,
+    parse_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +100,43 @@ struct ParsedStation {
     geometry_geojson: String,
     status: &'static str,
     change_hash: String,
+}
+
+#[derive(Debug, Default)]
+struct DiffPlan {
+    identity_name_mutations: Vec<IdentityNameMutation>,
+    created_stations: Vec<ParsedStation>,
+    updated_stations: Vec<UpdatedStationChange>,
+    removed_stations: Vec<ExistingVersion>,
+    unchanged: usize,
+}
+
+#[derive(Clone, Debug)]
+struct UpdatedStationChange {
+    before: ExistingVersion,
+    after: ParsedStation,
+}
+
+#[derive(Clone, Debug)]
+struct IdentityNameMutation {
+    station_uid: String,
+    canonical_name: String,
+    kind: IdentityNameMutationKind,
+}
+
+#[derive(Debug)]
+struct ChangeEventInsert {
+    station_uid: String,
+    change_kind: &'static str,
+    before_version_id: Option<i64>,
+    after_version_id: Option<i64>,
+    detail_json: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum IdentityNameMutationKind {
+    Insert,
+    Update,
 }
 
 #[derive(Clone, Debug)]
@@ -120,8 +203,28 @@ pub async fn ingest_snapshot(
     saved_to: &str,
     zip_bytes: &[u8],
 ) -> Result<IngestReport> {
+    ingest_snapshot_with_config(
+        pool,
+        dialect,
+        source_url,
+        saved_to,
+        zip_bytes,
+        PersistChunkConfig::for_dialect(dialect),
+    )
+    .await
+}
+
+pub async fn ingest_snapshot_with_config(
+    pool: &AnyPool,
+    dialect: SqlDialect,
+    source_url: &str,
+    saved_to: &str,
+    zip_bytes: &[u8],
+    chunk_config: PersistChunkConfig,
+) -> Result<IngestReport> {
+    let total_start = Instant::now();
     let source_sha256 = sha256_hex(zip_bytes);
-    let parsed_snapshot = parse_snapshot(zip_bytes, source_url)?;
+    let parsed_snapshot = parse_snapshot_timed(zip_bytes, source_url)?;
 
     let mut report = persist_snapshot(
         pool,
@@ -129,17 +232,32 @@ pub async fn ingest_snapshot(
         source_url,
         saved_to,
         &source_sha256,
-        &parsed_snapshot,
+        &parsed_snapshot.snapshot,
+        chunk_config,
     )
     .await?;
     report.source_sha256 = source_sha256;
+    report.extract_ms = parsed_snapshot.extract_ms;
+    report.parse_ms = parsed_snapshot.parse_ms;
+    report.total_ms = duration_ms(total_start.elapsed());
     Ok(report)
 }
 
-fn parse_snapshot(zip_bytes: &[u8], source_url: &str) -> Result<ParsedSnapshot> {
+fn parse_snapshot_timed(zip_bytes: &[u8], source_url: &str) -> Result<TimedParsedSnapshot> {
+    let extract_start = Instant::now();
     let (entry_name, geojson_bytes) = extract_station_geojson(zip_bytes)?;
+    let extract_ms = duration_ms(extract_start.elapsed());
+
+    let parse_start = Instant::now();
     let source_version = detect_source_version(source_url, &entry_name);
-    parse_feature_collection(&geojson_bytes, source_version)
+    let snapshot = parse_feature_collection(&geojson_bytes, source_version)?;
+    let parse_ms = duration_ms(parse_start.elapsed());
+
+    Ok(TimedParsedSnapshot {
+        snapshot,
+        extract_ms,
+        parse_ms,
+    })
 }
 
 fn parse_feature_collection(
@@ -179,9 +297,11 @@ async fn persist_snapshot(
     saved_to: &str,
     source_sha256: &str,
     snapshot: &ParsedSnapshot,
+    chunk_config: PersistChunkConfig,
 ) -> Result<IngestReport> {
     let mut tx = pool.begin().await?;
 
+    let preflight_start = Instant::now();
     if let Some(snapshot_id) = fetch_snapshot_id(&mut tx, dialect, source_sha256).await? {
         return Ok(IngestReport {
             source_name: SOURCE_NAME,
@@ -197,6 +317,13 @@ async fn persist_snapshot(
             unchanged: 0,
             removed: 0,
             skipped_existing_snapshot: true,
+            load_ms: 0,
+            save_zip_ms: 0,
+            extract_ms: 0,
+            parse_ms: 0,
+            diff_ms: 0,
+            persist_ms: duration_ms(preflight_start.elapsed()),
+            total_ms: 0,
         });
     }
 
@@ -211,76 +338,77 @@ async fn persist_snapshot(
     let snapshot_id = fetch_snapshot_id(&mut tx, dialect, source_sha256)
         .await?
         .context("failed to load inserted snapshot id")?;
+    let preflight_duration = preflight_start.elapsed();
 
     let now = Utc::now().to_rfc3339();
-    let mut identity_names = fetch_identity_names(&mut tx, dialect).await?;
-    let mut latest_versions = fetch_latest_versions(&mut tx, dialect).await?;
+    let diff_start = Instant::now();
+    let identity_names = fetch_identity_names(&mut tx, dialect).await?;
+    let latest_versions = fetch_latest_versions(&mut tx, dialect).await?;
+    let diff_plan = build_diff_plan(snapshot, identity_names, latest_versions);
+    let diff_ms = duration_ms(diff_start.elapsed());
 
-    let mut created = 0usize;
-    let mut updated = 0usize;
-    let mut unchanged = 0usize;
+    let persist_start = Instant::now();
+    apply_identity_name_mutations(
+        &mut tx,
+        dialect,
+        &diff_plan.identity_name_mutations,
+        chunk_config.write_chunk_size,
+    )
+    .await?;
 
-    for station in &snapshot.stations {
-        sync_identity_name(&mut tx, dialect, &mut identity_names, station).await?;
+    let stale_version_ids = diff_plan
+        .updated_stations
+        .iter()
+        .map(|change| change.before.id)
+        .chain(diff_plan.removed_stations.iter().map(|stale| stale.id))
+        .collect::<Vec<_>>();
+    close_station_versions(
+        &mut tx,
+        dialect,
+        &stale_version_ids,
+        &now,
+        chunk_config.close_chunk_size,
+    )
+    .await?;
 
-        match latest_versions.remove(&station.station_uid) {
-            None => {
-                let after_version_id =
-                    insert_station_version(&mut tx, dialect, snapshot_id, station, &now).await?;
-                insert_change_event(
-                    &mut tx,
-                    dialect,
-                    snapshot_id,
-                    &station.station_uid,
-                    "created",
-                    None,
-                    Some(after_version_id),
-                    created_detail_json(station),
-                )
-                .await?;
-                created += 1;
-            }
-            Some(existing) if existing.change_hash == station.change_hash => {
-                unchanged += 1;
-            }
-            Some(existing) => {
-                close_station_version(&mut tx, dialect, existing.id, &now).await?;
-                let after_version_id =
-                    insert_station_version(&mut tx, dialect, snapshot_id, station, &now).await?;
-                insert_change_event(
-                    &mut tx,
-                    dialect,
-                    snapshot_id,
-                    &station.station_uid,
-                    "updated",
-                    Some(existing.id),
-                    Some(after_version_id),
-                    updated_detail_json(&existing, station),
-                )
-                .await?;
-                updated += 1;
-            }
-        }
-    }
+    let created = diff_plan.created_stations.len();
+    let updated = diff_plan.updated_stations.len();
+    let removed = diff_plan.removed_stations.len();
 
-    let mut removed = 0usize;
-    for stale in latest_versions.into_values() {
-        close_station_version(&mut tx, dialect, stale.id, &now).await?;
-        insert_change_event(
-            &mut tx,
-            dialect,
-            snapshot_id,
-            &stale.station_uid,
-            "removed",
-            Some(stale.id),
-            None,
-            removed_detail_json(&stale),
+    let version_inserts = diff_plan
+        .created_stations
+        .iter()
+        .cloned()
+        .chain(
+            diff_plan
+                .updated_stations
+                .iter()
+                .map(|change| change.after.clone()),
         )
-        .await?;
-        removed += 1;
-    }
+        .collect::<Vec<_>>();
+
+    insert_station_versions(
+        &mut tx,
+        dialect,
+        snapshot_id,
+        &version_inserts,
+        &now,
+        chunk_config.write_chunk_size,
+    )
+    .await?;
+    let inserted_version_ids = fetch_inserted_version_ids(&mut tx, dialect, snapshot_id).await?;
+    let change_events = build_change_events(snapshot_id, &diff_plan, &inserted_version_ids)?;
+    insert_change_events(
+        &mut tx,
+        dialect,
+        snapshot_id,
+        &change_events,
+        chunk_config.write_chunk_size,
+    )
+    .await?;
 
     tx.commit().await?;
+    let persist_duration = preflight_duration + persist_start.elapsed();
 
     Ok(IngestReport {
         source_name: SOURCE_NAME,
@@ -293,9 +421,16 @@ async fn persist_snapshot(
         parsed_stations: snapshot.stations.len(),
         created,
         updated,
-        unchanged,
+        unchanged: diff_plan.unchanged,
         removed,
         skipped_existing_snapshot: false,
+        load_ms: 0,
+        save_zip_ms: 0,
+        extract_ms: 0,
+        parse_ms: 0,
+        diff_ms,
+        persist_ms: duration_ms(persist_duration),
+        total_ms: 0,
     })
 }
 
@@ -371,39 +506,121 @@ async fn fetch_identity_names(
     Ok(names)
 }
 
-async fn sync_identity_name(
+async fn apply_identity_name_mutations(
     tx: &mut Transaction<'_, Any>,
     dialect: SqlDialect,
-    identities: &mut BTreeMap<String, String>,
-    station: &ParsedStation,
+    mutations: &[IdentityNameMutation],
+    chunk_size: usize,
 ) -> Result<()> {
+    let inserts = mutations
+        .iter()
+        .filter(|mutation| matches!(mutation.kind, IdentityNameMutationKind::Insert))
+        .collect::<Vec<_>>();
+    for chunk in inserts.chunks(chunk_size) {
+        let values = std::iter::repeat_n("(?, ?)", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql =
+            format!("INSERT INTO station_identities (station_uid, canonical_name) VALUES {values}");
+        let statement = dialect.statement(&sql);
+        let mut query = sqlx::query(&statement);
+        for mutation in chunk {
+            query = query
+                .bind(&mutation.station_uid)
+                .bind(&mutation.canonical_name);
+        }
+        query.execute(&mut **tx).await?;
+    }
+
+    let updates = mutations
+        .iter()
+        .filter(|mutation| matches!(mutation.kind, IdentityNameMutationKind::Update))
+        .collect::<Vec<_>>();
+    for chunk in updates.chunks(chunk_size) {
+        let mut sql = String::from(
+            "UPDATE station_identities
+             SET canonical_name = CASE station_uid",
+        );
+        for _ in chunk {
+            sql.push_str(" WHEN ? THEN ?");
+        }
+        let where_placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        sql.push_str(" ELSE canonical_name END WHERE station_uid IN (");
+        sql.push_str(&where_placeholders);
+        sql.push(')');
+
+        let statement = dialect.statement(&sql);
+        let mut query = sqlx::query(&statement);
+        for mutation in chunk {
+            query = query
+                .bind(&mutation.station_uid)
+                .bind(&mutation.canonical_name);
+        }
+        for mutation in chunk {
+            query = query.bind(&mutation.station_uid);
+        }
+        query.execute(&mut **tx).await?;
+    }
+
+    Ok(())
+}
+
+fn queue_identity_name_mutation(
+    identities: &mut BTreeMap<String, String>,
+    identity_name_mutations: &mut Vec<IdentityNameMutation>,
+    station: &ParsedStation,
+) {
     match identities.get(&station.station_uid) {
         None => {
-            sqlx::query(&dialect.statement(
-                "INSERT INTO station_identities (station_uid, canonical_name)
-                 VALUES (?, ?)",
-            ))
-            .bind(&station.station_uid)
-            .bind(&station.station_name)
-            .execute(&mut **tx)
-            .await?;
+            identity_name_mutations.push(IdentityNameMutation {
+                station_uid: station.station_uid.clone(),
+                canonical_name: station.station_name.clone(),
+                kind: IdentityNameMutationKind::Insert,
+            });
         }
         Some(existing_name) if existing_name != &station.station_name => {
-            sqlx::query(&dialect.statement(
-                "UPDATE station_identities
-                 SET canonical_name = ?
-                 WHERE station_uid = ?",
-            ))
-            .bind(&station.station_name)
-            .bind(&station.station_uid)
-            .execute(&mut **tx)
-            .await?;
+            identity_name_mutations.push(IdentityNameMutation {
+                station_uid: station.station_uid.clone(),
+                canonical_name: station.station_name.clone(),
+                kind: IdentityNameMutationKind::Update,
+            });
         }
         Some(_) => {}
     }
 
     identities.insert(station.station_uid.clone(), station.station_name.clone());
-    Ok(())
+}
+
+fn build_diff_plan(
+    snapshot: &ParsedSnapshot,
+    mut identity_names: BTreeMap<String, String>,
+    mut latest_versions: BTreeMap<String, ExistingVersion>,
+) -> DiffPlan {
+    let mut plan = DiffPlan::default();
+
+    for station in &snapshot.stations {
+        queue_identity_name_mutation(
+            &mut identity_names,
+            &mut plan.identity_name_mutations,
+            station,
+        );
+
+        match latest_versions.remove(&station.station_uid) {
+            None => plan.created_stations.push(station.clone()),
+            Some(existing) if existing.change_hash == station.change_hash => {
+                plan.unchanged += 1;
+            }
+            Some(existing) => plan.updated_stations.push(UpdatedStationChange {
+                before: existing,
+                after: station.clone(),
+            }),
+        }
+    }
+
+    plan.removed_stations = latest_versions.into_values().collect();
+    plan
 }
 
 async fn fetch_latest_versions(
@@ -455,113 +672,215 @@ async fn fetch_latest_versions(
     Ok(versions)
 }
 
-async fn close_station_version(
+async fn close_station_versions(
     tx: &mut Transaction<'_, Any>,
     dialect: SqlDialect,
-    version_id: i64,
+    version_ids: &[i64],
     valid_to: &str,
+    chunk_size: usize,
 ) -> Result<()> {
-    let sql = format!(
-        "UPDATE station_versions
-         SET valid_to = {}
-         WHERE id = ? AND valid_to IS NULL",
-        dialect.timestamp_parameter()
-    );
+    for chunk in version_ids.chunks(chunk_size) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "UPDATE station_versions
+             SET valid_to = {}
+             WHERE id IN ({placeholders}) AND valid_to IS NULL",
+            dialect.timestamp_parameter()
+        );
 
-    sqlx::query(&dialect.statement(&sql))
-        .bind(valid_to)
-        .bind(version_id)
-        .execute(&mut **tx)
-        .await?;
+        let statement = dialect.statement(&sql);
+        let mut query = sqlx::query(&statement).bind(valid_to);
+        for version_id in chunk {
+            query = query.bind(*version_id);
+        }
+        query.execute(&mut **tx).await?;
+    }
 
     Ok(())
 }
 
-async fn insert_station_version(
+async fn insert_station_versions(
     tx: &mut Transaction<'_, Any>,
     dialect: SqlDialect,
     snapshot_id: i64,
-    station: &ParsedStation,
+    stations: &[ParsedStation],
     valid_from: &str,
-) -> Result<i64> {
-    let sql = format!(
-        "INSERT INTO station_versions (
-           station_uid,
-           snapshot_id,
-           source_station_code,
-           source_group_code,
-           station_name,
-           line_name,
-           operator_name,
-           latitude,
-           longitude,
-           geometry_geojson,
-           status,
-           valid_from,
-           change_hash
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {}, ?)",
-        dialect.timestamp_parameter()
-    );
+    chunk_size: usize,
+) -> Result<()> {
+    for chunk in stations.chunks(chunk_size) {
+        let row_sql = format!(
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {}, ?)",
+            dialect.timestamp_parameter()
+        );
+        let values = std::iter::repeat_n(row_sql.as_str(), chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO station_versions (
+               station_uid,
+               snapshot_id,
+               source_station_code,
+               source_group_code,
+               station_name,
+               line_name,
+               operator_name,
+               latitude,
+               longitude,
+               geometry_geojson,
+               status,
+               valid_from,
+               change_hash
+             ) VALUES {values}"
+        );
 
-    sqlx::query(&dialect.statement(&sql))
-        .bind(&station.station_uid)
-        .bind(snapshot_id)
-        .bind(station.source_station_code.as_deref())
-        .bind(station.source_group_code.as_deref())
-        .bind(&station.station_name)
-        .bind(&station.line_name)
-        .bind(&station.operator_name)
-        .bind(station.latitude)
-        .bind(station.longitude)
-        .bind(&station.geometry_geojson)
-        .bind(station.status)
-        .bind(valid_from)
-        .bind(&station.change_hash)
-        .execute(&mut **tx)
-        .await?;
+        let statement = dialect.statement(&sql);
+        let mut query = sqlx::query(&statement);
+        for station in chunk {
+            query = query
+                .bind(&station.station_uid)
+                .bind(snapshot_id)
+                .bind(station.source_station_code.as_deref())
+                .bind(station.source_group_code.as_deref())
+                .bind(&station.station_name)
+                .bind(&station.line_name)
+                .bind(&station.operator_name)
+                .bind(station.latitude)
+                .bind(station.longitude)
+                .bind(&station.geometry_geojson)
+                .bind(station.status)
+                .bind(valid_from)
+                .bind(&station.change_hash);
+        }
+        query.execute(&mut **tx).await?;
+    }
 
-    let row = sqlx::query(&dialect.statement(
-        "SELECT id
-         FROM station_versions
-         WHERE station_uid = ? AND snapshot_id = ?
-         LIMIT 1",
-    ))
-    .bind(&station.station_uid)
-    .bind(snapshot_id)
-    .fetch_one(&mut **tx)
-    .await?;
-
-    Ok(row.try_get::<i64, _>("id")?)
+    Ok(())
 }
 
-async fn insert_change_event(
+async fn fetch_inserted_version_ids(
     tx: &mut Transaction<'_, Any>,
     dialect: SqlDialect,
     snapshot_id: i64,
-    station_uid: &str,
-    change_kind: &str,
-    before_version_id: Option<i64>,
-    after_version_id: Option<i64>,
-    detail_json: Value,
-) -> Result<()> {
-    sqlx::query(&dialect.statement(
-        "INSERT INTO station_change_events (
-           snapshot_id,
-           station_uid,
-           change_kind,
-           before_version_id,
-           after_version_id,
-           detail_json
-         ) VALUES (?, ?, ?, ?, ?, ?)",
+) -> Result<BTreeMap<String, i64>> {
+    let rows = sqlx::query(&dialect.statement(
+        "SELECT station_uid, id
+         FROM station_versions
+         WHERE snapshot_id = ?",
     ))
     .bind(snapshot_id)
-    .bind(station_uid)
-    .bind(change_kind)
-    .bind(before_version_id)
-    .bind(after_version_id)
-    .bind(detail_json.to_string())
-    .execute(&mut **tx)
+    .fetch_all(&mut **tx)
     .await?;
+
+    let mut version_ids = BTreeMap::new();
+    for row in rows {
+        version_ids.insert(
+            row.try_get::<String, _>("station_uid")?,
+            row.try_get::<i64, _>("id")?,
+        );
+    }
+
+    Ok(version_ids)
+}
+
+fn build_change_events(
+    snapshot_id: i64,
+    diff_plan: &DiffPlan,
+    inserted_version_ids: &BTreeMap<String, i64>,
+) -> Result<Vec<ChangeEventInsert>> {
+    let mut change_events = Vec::with_capacity(
+        diff_plan.created_stations.len()
+            + diff_plan.updated_stations.len()
+            + diff_plan.removed_stations.len(),
+    );
+
+    for station in &diff_plan.created_stations {
+        let after_version_id = inserted_version_ids
+            .get(&station.station_uid)
+            .copied()
+            .with_context(|| {
+                format!(
+                    "missing inserted version id for created station {} in snapshot {snapshot_id}",
+                    station.station_uid
+                )
+            })?;
+        change_events.push(ChangeEventInsert {
+            station_uid: station.station_uid.clone(),
+            change_kind: "created",
+            before_version_id: None,
+            after_version_id: Some(after_version_id),
+            detail_json: created_detail_json(station).to_string(),
+        });
+    }
+
+    for change in &diff_plan.updated_stations {
+        let after_version_id = inserted_version_ids
+            .get(&change.after.station_uid)
+            .copied()
+            .with_context(|| {
+                format!(
+                    "missing inserted version id for updated station {} in snapshot {snapshot_id}",
+                    change.after.station_uid
+                )
+            })?;
+        change_events.push(ChangeEventInsert {
+            station_uid: change.after.station_uid.clone(),
+            change_kind: "updated",
+            before_version_id: Some(change.before.id),
+            after_version_id: Some(after_version_id),
+            detail_json: updated_detail_json(&change.before, &change.after).to_string(),
+        });
+    }
+
+    for stale in &diff_plan.removed_stations {
+        change_events.push(ChangeEventInsert {
+            station_uid: stale.station_uid.clone(),
+            change_kind: "removed",
+            before_version_id: Some(stale.id),
+            after_version_id: None,
+            detail_json: removed_detail_json(stale).to_string(),
+        });
+    }
+
+    Ok(change_events)
+}
+
+async fn insert_change_events(
+    tx: &mut Transaction<'_, Any>,
+    dialect: SqlDialect,
+    snapshot_id: i64,
+    change_events: &[ChangeEventInsert],
+    chunk_size: usize,
+) -> Result<()> {
+    for chunk in change_events.chunks(chunk_size) {
+        let values = std::iter::repeat_n("(?, ?, ?, ?, ?, ?)", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO station_change_events (
+               snapshot_id,
+               station_uid,
+               change_kind,
+               before_version_id,
+               after_version_id,
+               detail_json
+             ) VALUES {values}"
+        );
+
+        let statement = dialect.statement(&sql);
+        let mut query = sqlx::query(&statement);
+        for event in chunk {
+            query = query
+                .bind(snapshot_id)
+                .bind(&event.station_uid)
+                .bind(event.change_kind)
+                .bind(event.before_version_id)
+                .bind(event.after_version_id)
+                .bind(&event.detail_json);
+        }
+        query.execute(&mut **tx).await?;
+    }
 
     Ok(())
 }
@@ -924,9 +1243,18 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn duration_ms(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    use sqlx::{any::AnyPoolOptions, Row};
+    use station_shared::db::ensure_sqlx_drivers;
+    use zip::{write::SimpleFileOptions, ZipWriter};
 
     #[test]
     fn groups_duplicate_segments_into_one_station() {
@@ -990,5 +1318,297 @@ mod tests {
         let point = representative_point(&[vec![[139.0, 35.0], [141.0, 35.0]]]).unwrap();
         assert!((point.0 - 140.0).abs() < 1e-6);
         assert!((point.1 - 35.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn ingest_snapshot_is_idempotent_for_identical_zip_bytes() {
+        let pool = test_pool().await;
+        let zip_bytes = snapshot_zip_bytes(
+            r#"{
+              "features": [
+                {
+                  "properties": {
+                    "N02_003": "京王線",
+                    "N02_004": "京王電鉄",
+                    "N02_005": "新宿",
+                    "N02_005c": "003700",
+                    "N02_005g": "003700"
+                  },
+                  "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[139.699, 35.690], [139.701, 35.692]]
+                  }
+                },
+                {
+                  "properties": {
+                    "N02_003": "中央線",
+                    "N02_004": "東日本旅客鉄道",
+                    "N02_005": "中野",
+                    "N02_005c": "003568",
+                    "N02_005g": "003568"
+                  },
+                  "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[139.665, 35.705], [139.666, 35.706]]
+                  }
+                }
+              ]
+            }"#,
+        );
+
+        let first = ingest_snapshot(
+            &pool,
+            SqlDialect::Sqlite,
+            "file:///tmp/N02-24_GML.zip",
+            "/tmp/first.zip",
+            &zip_bytes,
+        )
+        .await
+        .unwrap();
+        let second = ingest_snapshot(
+            &pool,
+            SqlDialect::Sqlite,
+            "file:///tmp/N02-24_GML.zip",
+            "/tmp/second.zip",
+            &zip_bytes,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first.created, 2);
+        assert_eq!(first.updated, 0);
+        assert_eq!(first.removed, 0);
+        assert!(!first.skipped_existing_snapshot);
+
+        assert_eq!(second.created, 0);
+        assert_eq!(second.updated, 0);
+        assert_eq!(second.removed, 0);
+        assert!(second.skipped_existing_snapshot);
+        assert_snapshot_phase_timings_are_sane(&first);
+        assert_snapshot_phase_timings_are_sane(&second);
+        assert_eq!(second.diff_ms, 0);
+
+        assert_eq!(
+            query_count(&pool, "SELECT COUNT(*) AS count FROM source_snapshots").await,
+            1
+        );
+        assert_eq!(
+            query_count(&pool, "SELECT COUNT(*) AS count FROM station_versions").await,
+            2
+        );
+        assert_eq!(
+            query_count(&pool, "SELECT COUNT(*) AS count FROM stations_latest").await,
+            2
+        );
+        assert_eq!(
+            query_count(&pool, "SELECT COUNT(*) AS count FROM station_change_events").await,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_snapshot_tracks_created_updated_and_removed_stations() {
+        let pool = test_pool().await;
+        let first_zip = snapshot_zip_bytes(
+            r#"{
+              "features": [
+                {
+                  "properties": {
+                    "N02_003": "京王線",
+                    "N02_004": "京王電鉄",
+                    "N02_005": "新宿",
+                    "N02_005c": "003700",
+                    "N02_005g": "003700"
+                  },
+                  "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[139.699, 35.690], [139.701, 35.692]]
+                  }
+                },
+                {
+                  "properties": {
+                    "N02_003": "中央線",
+                    "N02_004": "東日本旅客鉄道",
+                    "N02_005": "中野",
+                    "N02_005c": "003568",
+                    "N02_005g": "003568"
+                  },
+                  "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[139.665, 35.705], [139.666, 35.706]]
+                  }
+                }
+              ]
+            }"#,
+        );
+        let second_zip = snapshot_zip_bytes(
+            r#"{
+              "features": [
+                {
+                  "properties": {
+                    "N02_003": "京王線",
+                    "N02_004": "京王電鉄",
+                    "N02_005": "新宿",
+                    "N02_005c": "003700",
+                    "N02_005g": "003700"
+                  },
+                  "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[139.699, 35.690], [139.703, 35.694]]
+                  }
+                },
+                {
+                  "properties": {
+                    "N02_003": "山手線",
+                    "N02_004": "東日本旅客鉄道",
+                    "N02_005": "渋谷",
+                    "N02_005c": "003620",
+                    "N02_005g": "003620"
+                  },
+                  "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[139.700, 35.657], [139.702, 35.659]]
+                  }
+                }
+              ]
+            }"#,
+        );
+
+        let first = ingest_snapshot(
+            &pool,
+            SqlDialect::Sqlite,
+            "file:///tmp/N02-24_GML.zip",
+            "/tmp/first.zip",
+            &first_zip,
+        )
+        .await
+        .unwrap();
+        let second = ingest_snapshot(
+            &pool,
+            SqlDialect::Sqlite,
+            "file:///tmp/N02-25_GML.zip",
+            "/tmp/second.zip",
+            &second_zip,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first.created, 2);
+        assert_eq!(second.created, 1);
+        assert_eq!(second.updated, 1);
+        assert_eq!(second.removed, 1);
+        assert_snapshot_phase_timings_are_sane(&second);
+        assert_eq!(
+            query_count(&pool, "SELECT COUNT(*) AS count FROM stations_latest").await,
+            2
+        );
+
+        let latest_shinjuku = sqlx::query(
+            "SELECT latitude, longitude
+             FROM stations_latest
+             WHERE station_name = '新宿'
+             LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!((latest_shinjuku.try_get::<f64, _>("latitude").unwrap() - 35.692).abs() < 1e-6);
+        assert!((latest_shinjuku.try_get::<f64, _>("longitude").unwrap() - 139.701).abs() < 1e-6);
+
+        assert_eq!(
+            query_count(
+                &pool,
+                "SELECT COUNT(*) AS count FROM station_change_events WHERE change_kind = 'created'",
+            )
+            .await,
+            3
+        );
+        assert_eq!(
+            query_count(
+                &pool,
+                "SELECT COUNT(*) AS count FROM station_change_events WHERE change_kind = 'updated'",
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            query_count(
+                &pool,
+                "SELECT COUNT(*) AS count FROM station_change_events WHERE change_kind = 'removed'",
+            )
+            .await,
+            1
+        );
+    }
+
+    fn assert_snapshot_phase_timings_are_sane(report: &IngestReport) {
+        let report_json = serde_json::to_value(report).unwrap();
+        let total_ms = phase_timing_value(&report_json, "total_ms");
+        let load_ms = phase_timing_value(&report_json, "load_ms");
+        let save_zip_ms = phase_timing_value(&report_json, "save_zip_ms");
+        let component_keys = ["extract_ms", "parse_ms", "diff_ms", "persist_ms"];
+        let component_sum = component_keys
+            .iter()
+            .map(|key| {
+                let value = phase_timing_value(&report_json, key);
+                assert!(value <= total_ms, "{key} should not exceed total_ms");
+                value
+            })
+            .sum::<u64>();
+
+        assert_eq!(load_ms, 0);
+        assert_eq!(save_zip_ms, 0);
+        assert!(
+            total_ms >= component_sum,
+            "total_ms should cover snapshot phase timings"
+        );
+    }
+
+    fn phase_timing_value(report_json: &serde_json::Value, key: &str) -> u64 {
+        report_json
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_else(|| panic!("{key} should be present in serialized ingest report"))
+    }
+
+    async fn test_pool() -> AnyPool {
+        ensure_sqlx_drivers();
+        let pool = AnyPoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        apply_sqlite_schema(&pool).await;
+        pool
+    }
+
+    async fn apply_sqlite_schema(pool: &AnyPool) {
+        for statement in include_str!("../../../storage/migrations/sqlite/0001_init.sql")
+            .split(';')
+            .map(str::trim)
+            .filter(|statement| !statement.is_empty())
+        {
+            sqlx::query(statement).execute(pool).await.unwrap();
+        }
+    }
+
+    async fn query_count(pool: &AnyPool, sql: &str) -> i64 {
+        sqlx::query(sql)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .try_get::<i64, _>("count")
+            .unwrap()
+    }
+
+    fn snapshot_zip_bytes(geojson: &str) -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(STATION_GEOJSON_PATH, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(geojson.as_bytes()).unwrap();
+        writer.finish().unwrap().into_inner()
     }
 }

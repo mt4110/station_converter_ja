@@ -47,7 +47,10 @@ pub struct AppConfig {
     pub ready_require_cache: bool,
     pub update_interval_seconds: u64,
     pub source_snapshot_url: Option<String>,
+    pub allow_local_source_snapshot: bool,
     pub temp_asset_dir: String,
+    pub ingest_write_chunk_size: usize,
+    pub ingest_close_chunk_size: usize,
 }
 
 impl AppConfig {
@@ -80,8 +83,17 @@ impl AppConfig {
         let source_snapshot_url = env::var("SOURCE_SNAPSHOT_URL")
             .ok()
             .filter(|v| !v.is_empty());
+        let allow_local_source_snapshot = env::var("ALLOW_LOCAL_SOURCE_SNAPSHOT")
+            .unwrap_or_else(|_| "false".to_string())
+            .eq_ignore_ascii_case("true");
         let temp_asset_dir =
             env::var("TEMP_ASSET_DIR").unwrap_or_else(|_| "worker/crawler/temp_assets".to_string());
+        let ingest_write_chunk_size = match env_usize_optional("INGEST_WRITE_CHUNK_SIZE")? {
+            Some(value) => value,
+            None => default_ingest_write_chunk_size(&database_type),
+        };
+        let ingest_close_chunk_size =
+            env_usize_optional("INGEST_CLOSE_CHUNK_SIZE")?.unwrap_or(1000);
 
         Ok(Self {
             service_name: service_name.to_string(),
@@ -92,7 +104,34 @@ impl AppConfig {
             ready_require_cache,
             update_interval_seconds,
             source_snapshot_url,
+            allow_local_source_snapshot,
             temp_asset_dir,
+            ingest_write_chunk_size,
+            ingest_close_chunk_size,
         })
+    }
+}
+
+fn env_usize_optional(name: &str) -> Result<Option<usize>> {
+    let value = match env::var(name) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| anyhow!("{name} must be a positive integer"))?;
+
+    if parsed == 0 {
+        return Err(anyhow!("{name} must be greater than 0"));
+    }
+
+    Ok(Some(parsed))
+}
+
+fn default_ingest_write_chunk_size(database_type: &DatabaseType) -> usize {
+    match database_type {
+        DatabaseType::Postgres | DatabaseType::Sqlite => 1000,
+        DatabaseType::Mysql => 200,
     }
 }

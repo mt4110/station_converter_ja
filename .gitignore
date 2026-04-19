@@ -9,6 +9,7 @@ target/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/test-results/
 
 # local env
 **/.env
@@ -25,6 +26,8 @@ worker/crawler/temp_assets/*.gml
 # sqlite artifacts
 artifacts/sqlite/*
 !artifacts/sqlite/.gitkeep
+storage/locks/*
+!storage/locks/.gitkeep
 storage/sqlite/*
 !storage/sqlite/.gitkeep
 
@@ -42,6 +45,7 @@ result
 # macOS
 .DS_Store
 **/.DS_Store
+launcher/.state/
 
 # editor / recovery
 .vscode/
