@@ -260,195 +260,181 @@ pub fn render_validation_report(report: &ValidationReport, json_output: bool) ->
     Ok(output.trim_end().to_string())
 }
 
-fn fetch_latest_snapshot<'a>(
-    pool: &'a AnyPool,
+async fn fetch_latest_snapshot(
+    pool: &AnyPool,
     dialect: SqlDialect,
-) -> impl std::future::Future<Output = Result<Option<SnapshotMeta>>> + 'a {
-    async move {
-        let row = sqlx::query(&dialect.statement(
-            "SELECT id, source_version, source_url
-             FROM source_snapshots
-             WHERE source_name = ?
-             ORDER BY id DESC
-             LIMIT 1",
-        ))
-        .bind(SOURCE_NAME)
-        .fetch_optional(pool)
+) -> Result<Option<SnapshotMeta>> {
+    let row = sqlx::query(&dialect.statement(
+        "SELECT id, source_version, source_url
+         FROM source_snapshots
+         WHERE source_name = ?
+         ORDER BY id DESC
+         LIMIT 1",
+    ))
+    .bind(SOURCE_NAME)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(|row| {
+        Ok(SnapshotMeta {
+            id: row.try_get::<i64, _>("id")?,
+            source_version: decode_optional_string(&row, "source_version")?,
+            source_url: decode_required_string(&row, "source_url")?,
+        })
+    })
+    .transpose()
+}
+
+async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<LatestMetrics> {
+    let sql = format!(
+        "SELECT
+           {} AS station_count,
+           {} AS line_count,
+           {} AS operator_count,
+           {} AS blank_station_name_count,
+           {} AS blank_line_name_count,
+           {} AS blank_operator_name_count,
+           {} AS out_of_range_coordinate_count,
+           {} AS suspicious_coordinate_count
+         FROM stations_latest
+         WHERE station_uid LIKE ?",
+        integer_aggregate_sql(dialect, "COUNT(*)"),
+        integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "line_name")),
+        integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "operator_name")),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN TRIM(COALESCE(station_name, '')) = '' THEN 1 ELSE 0 END)"
+        ),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN TRIM(COALESCE(line_name, '')) = '' THEN 1 ELSE 0 END)"
+        ),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN TRIM(COALESCE(operator_name, '')) = '' THEN 1 ELSE 0 END)"
+        ),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN latitude < ? OR latitude > ? OR longitude < ? OR longitude > ? THEN 1 ELSE 0 END)"
+        ),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN latitude < ? OR latitude > ? OR longitude < ? OR longitude > ? THEN 1 ELSE 0 END)"
+        ),
+    );
+    let row = sqlx::query(&dialect.statement(&sql))
+        .bind(HARD_MIN_LATITUDE)
+        .bind(HARD_MAX_LATITUDE)
+        .bind(HARD_MIN_LONGITUDE)
+        .bind(HARD_MAX_LONGITUDE)
+        .bind(WARN_MIN_LATITUDE)
+        .bind(WARN_MAX_LATITUDE)
+        .bind(WARN_MIN_LONGITUDE)
+        .bind(WARN_MAX_LONGITUDE)
+        .bind(STATION_UID_LIKE_PATTERN)
+        .fetch_one(pool)
         .await?;
 
-        row.map(|row| {
-            Ok(SnapshotMeta {
-                id: row.try_get::<i64, _>("id")?,
-                source_version: decode_optional_string(&row, "source_version")?,
-                source_url: decode_required_string(&row, "source_url")?,
-            })
-        })
-        .transpose()
-    }
+    Ok(LatestMetrics {
+        station_count: row.try_get::<i64, _>("station_count")?,
+        line_count: row.try_get::<i64, _>("line_count")?,
+        operator_count: row.try_get::<i64, _>("operator_count")?,
+        blank_station_name_count: row
+            .try_get::<Option<i64>, _>("blank_station_name_count")?
+            .unwrap_or_default(),
+        blank_line_name_count: row
+            .try_get::<Option<i64>, _>("blank_line_name_count")?
+            .unwrap_or_default(),
+        blank_operator_name_count: row
+            .try_get::<Option<i64>, _>("blank_operator_name_count")?
+            .unwrap_or_default(),
+        out_of_range_coordinate_count: row
+            .try_get::<Option<i64>, _>("out_of_range_coordinate_count")?
+            .unwrap_or_default(),
+        suspicious_coordinate_count: row
+            .try_get::<Option<i64>, _>("suspicious_coordinate_count")?
+            .unwrap_or_default(),
+    })
 }
 
-fn fetch_latest_metrics<'a>(
-    pool: &'a AnyPool,
-    dialect: SqlDialect,
-) -> impl std::future::Future<Output = Result<LatestMetrics>> + 'a {
-    async move {
-        let sql = format!(
-            "SELECT
-               {} AS station_count,
-               {} AS line_count,
-               {} AS operator_count,
-               {} AS blank_station_name_count,
-               {} AS blank_line_name_count,
-               {} AS blank_operator_name_count,
-               {} AS out_of_range_coordinate_count,
-               {} AS suspicious_coordinate_count
-             FROM stations_latest
-             WHERE station_uid LIKE ?",
-            integer_aggregate_sql(dialect, "COUNT(*)"),
-            integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "line_name")),
-            integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "operator_name")),
-            integer_aggregate_sql(
-                dialect,
-                "SUM(CASE WHEN TRIM(COALESCE(station_name, '')) = '' THEN 1 ELSE 0 END)"
-            ),
-            integer_aggregate_sql(
-                dialect,
-                "SUM(CASE WHEN TRIM(COALESCE(line_name, '')) = '' THEN 1 ELSE 0 END)"
-            ),
-            integer_aggregate_sql(
-                dialect,
-                "SUM(CASE WHEN TRIM(COALESCE(operator_name, '')) = '' THEN 1 ELSE 0 END)"
-            ),
-            integer_aggregate_sql(
-                dialect,
-                "SUM(CASE WHEN latitude < ? OR latitude > ? OR longitude < ? OR longitude > ? THEN 1 ELSE 0 END)"
-            ),
-            integer_aggregate_sql(
-                dialect,
-                "SUM(CASE WHEN latitude < ? OR latitude > ? OR longitude < ? OR longitude > ? THEN 1 ELSE 0 END)"
-            ),
-        );
-        let row = sqlx::query(&dialect.statement(&sql))
-            .bind(HARD_MIN_LATITUDE)
-            .bind(HARD_MAX_LATITUDE)
-            .bind(HARD_MIN_LONGITUDE)
-            .bind(HARD_MAX_LONGITUDE)
-            .bind(WARN_MIN_LATITUDE)
-            .bind(WARN_MAX_LATITUDE)
-            .bind(WARN_MIN_LONGITUDE)
-            .bind(WARN_MAX_LONGITUDE)
-            .bind(STATION_UID_LIKE_PATTERN)
-            .fetch_one(pool)
-            .await?;
+async fn fetch_duplicate_station_uid_count(pool: &AnyPool, dialect: SqlDialect) -> Result<i64> {
+    let sql = format!(
+        "SELECT {} AS duplicate_station_uid_count
+         FROM (
+           SELECT station_uid
+           FROM stations_latest
+           WHERE station_uid LIKE ?
+           GROUP BY station_uid
+           HAVING COUNT(*) > 1
+         ) duplicate_station_uids",
+        integer_aggregate_sql(dialect, "COUNT(*)"),
+    );
+    let row = sqlx::query(&dialect.statement(&sql))
+        .bind(STATION_UID_LIKE_PATTERN)
+        .fetch_one(pool)
+        .await?;
 
-        Ok(LatestMetrics {
-            station_count: row.try_get::<i64, _>("station_count")?,
-            line_count: row.try_get::<i64, _>("line_count")?,
-            operator_count: row.try_get::<i64, _>("operator_count")?,
-            blank_station_name_count: row
-                .try_get::<Option<i64>, _>("blank_station_name_count")?
-                .unwrap_or_default(),
-            blank_line_name_count: row
-                .try_get::<Option<i64>, _>("blank_line_name_count")?
-                .unwrap_or_default(),
-            blank_operator_name_count: row
-                .try_get::<Option<i64>, _>("blank_operator_name_count")?
-                .unwrap_or_default(),
-            out_of_range_coordinate_count: row
-                .try_get::<Option<i64>, _>("out_of_range_coordinate_count")?
-                .unwrap_or_default(),
-            suspicious_coordinate_count: row
-                .try_get::<Option<i64>, _>("suspicious_coordinate_count")?
-                .unwrap_or_default(),
-        })
-    }
+    Ok(row.try_get::<i64, _>("duplicate_station_uid_count")?)
 }
 
-fn fetch_duplicate_station_uid_count<'a>(
-    pool: &'a AnyPool,
-    dialect: SqlDialect,
-) -> impl std::future::Future<Output = Result<i64>> + 'a {
-    async move {
-        let sql = format!(
-            "SELECT {} AS duplicate_station_uid_count
-             FROM (
-               SELECT station_uid
-               FROM stations_latest
-               WHERE station_uid LIKE ?
-               GROUP BY station_uid
-               HAVING COUNT(*) > 1
-             ) duplicate_station_uids",
-            integer_aggregate_sql(dialect, "COUNT(*)"),
-        );
-        let row = sqlx::query(&dialect.statement(&sql))
-            .bind(STATION_UID_LIKE_PATTERN)
-            .fetch_one(pool)
-            .await?;
-
-        Ok(row.try_get::<i64, _>("duplicate_station_uid_count")?)
-    }
-}
-
-fn fetch_change_summary<'a>(
-    pool: &'a AnyPool,
+async fn fetch_change_summary(
+    pool: &AnyPool,
     dialect: SqlDialect,
     snapshot_id: i64,
-) -> impl std::future::Future<Output = Result<ChangeSummary>> + 'a {
-    async move {
-        let counts_sql = format!(
-            "SELECT
-               {} AS created_count,
-               {} AS updated_count,
-               {} AS removed_count
-             FROM station_change_events
-             WHERE snapshot_id = ?
-               AND station_uid LIKE ?",
-            integer_aggregate_sql(
-                dialect,
-                "SUM(CASE WHEN change_kind = 'created' THEN 1 ELSE 0 END)"
-            ),
-            integer_aggregate_sql(
-                dialect,
-                "SUM(CASE WHEN change_kind = 'updated' THEN 1 ELSE 0 END)"
-            ),
-            integer_aggregate_sql(
-                dialect,
-                "SUM(CASE WHEN change_kind = 'removed' THEN 1 ELSE 0 END)"
-            ),
-        );
-        let counts = sqlx::query(&dialect.statement(&counts_sql))
-            .bind(snapshot_id)
-            .bind(STATION_UID_LIKE_PATTERN)
-            .fetch_one(pool)
-            .await?;
+) -> Result<ChangeSummary> {
+    let counts_sql = format!(
+        "SELECT
+           {} AS created_count,
+           {} AS updated_count,
+           {} AS removed_count
+         FROM station_change_events
+         WHERE snapshot_id = ?
+           AND station_uid LIKE ?",
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN change_kind = 'created' THEN 1 ELSE 0 END)"
+        ),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN change_kind = 'updated' THEN 1 ELSE 0 END)"
+        ),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN change_kind = 'removed' THEN 1 ELSE 0 END)"
+        ),
+    );
+    let counts = sqlx::query(&dialect.statement(&counts_sql))
+        .bind(snapshot_id)
+        .bind(STATION_UID_LIKE_PATTERN)
+        .fetch_one(pool)
+        .await?;
 
-        let latest_versions_sql = format!(
-            "SELECT {} AS latest_snapshot_version_count
-             FROM station_versions
-             WHERE snapshot_id = ?
-               AND station_uid LIKE ?",
-            integer_aggregate_sql(dialect, "COUNT(*)"),
-        );
-        let latest_versions = sqlx::query(&dialect.statement(&latest_versions_sql))
-            .bind(snapshot_id)
-            .bind(STATION_UID_LIKE_PATTERN)
-            .fetch_one(pool)
-            .await?;
+    let latest_versions_sql = format!(
+        "SELECT {} AS latest_snapshot_version_count
+         FROM station_versions
+         WHERE snapshot_id = ?
+           AND station_uid LIKE ?",
+        integer_aggregate_sql(dialect, "COUNT(*)"),
+    );
+    let latest_versions = sqlx::query(&dialect.statement(&latest_versions_sql))
+        .bind(snapshot_id)
+        .bind(STATION_UID_LIKE_PATTERN)
+        .fetch_one(pool)
+        .await?;
 
-        Ok(ChangeSummary {
-            created_count: counts
-                .try_get::<Option<i64>, _>("created_count")?
-                .unwrap_or_default(),
-            updated_count: counts
-                .try_get::<Option<i64>, _>("updated_count")?
-                .unwrap_or_default(),
-            removed_count: counts
-                .try_get::<Option<i64>, _>("removed_count")?
-                .unwrap_or_default(),
-            latest_snapshot_version_count: latest_versions
-                .try_get::<i64, _>("latest_snapshot_version_count")?,
-        })
-    }
+    Ok(ChangeSummary {
+        created_count: counts
+            .try_get::<Option<i64>, _>("created_count")?
+            .unwrap_or_default(),
+        updated_count: counts
+            .try_get::<Option<i64>, _>("updated_count")?
+            .unwrap_or_default(),
+        removed_count: counts
+            .try_get::<Option<i64>, _>("removed_count")?
+            .unwrap_or_default(),
+        latest_snapshot_version_count: latest_versions
+            .try_get::<i64, _>("latest_snapshot_version_count")?,
+    })
 }
 
 fn threshold_check(name: &'static str, observed: i64, minimum: i64) -> ValidationCheck {
@@ -808,12 +794,7 @@ mod tests {
         insert_station_version(
             &pool,
             1,
-            "stn_n02_blank",
-            "",
-            "京王線",
-            "京王電鉄",
-            35.69,
-            139.70,
+            StationVersionSeed::new("stn_n02_blank", "", "京王線", "京王電鉄", 35.69, 139.70),
         )
         .await;
         insert_change_event(&pool, 1, "stn_n02_blank", "created").await;
@@ -852,23 +833,27 @@ mod tests {
         insert_station_version(
             &pool,
             1,
-            "stn_n02_duplicate",
-            "新宿",
-            "京王線",
-            "京王電鉄",
-            35.69,
-            139.70,
+            StationVersionSeed::new(
+                "stn_n02_duplicate",
+                "新宿",
+                "京王線",
+                "京王電鉄",
+                35.69,
+                139.70,
+            ),
         )
         .await;
         insert_station_version(
             &pool,
             2,
-            "stn_n02_duplicate",
-            "新宿",
-            "京王線",
-            "京王電鉄",
-            35.69,
-            139.70,
+            StationVersionSeed::new(
+                "stn_n02_duplicate",
+                "新宿",
+                "京王線",
+                "京王電鉄",
+                35.69,
+                139.70,
+            ),
         )
         .await;
         insert_change_event(&pool, 2, "stn_n02_duplicate", "created").await;
@@ -948,15 +933,39 @@ mod tests {
         .unwrap();
     }
 
+    struct StationVersionSeed<'a> {
+        station_uid: &'a str,
+        station_name: &'a str,
+        line_name: &'a str,
+        operator_name: &'a str,
+        latitude: f64,
+        longitude: f64,
+    }
+
+    impl<'a> StationVersionSeed<'a> {
+        fn new(
+            station_uid: &'a str,
+            station_name: &'a str,
+            line_name: &'a str,
+            operator_name: &'a str,
+            latitude: f64,
+            longitude: f64,
+        ) -> Self {
+            Self {
+                station_uid,
+                station_name,
+                line_name,
+                operator_name,
+                latitude,
+                longitude,
+            }
+        }
+    }
+
     async fn insert_station_version(
         pool: &AnyPool,
         snapshot_id: i64,
-        station_uid: &str,
-        station_name: &str,
-        line_name: &str,
-        operator_name: &str,
-        latitude: f64,
-        longitude: f64,
+        station: StationVersionSeed<'_>,
     ) {
         sqlx::query(
             "INSERT INTO station_versions (
@@ -971,14 +980,17 @@ mod tests {
                change_hash
              ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
         )
-        .bind(station_uid)
+        .bind(station.station_uid)
         .bind(snapshot_id)
-        .bind(station_name)
-        .bind(line_name)
-        .bind(operator_name)
-        .bind(latitude)
-        .bind(longitude)
-        .bind(format!("{station_uid}:{snapshot_id}:{station_name}"))
+        .bind(station.station_name)
+        .bind(station.line_name)
+        .bind(station.operator_name)
+        .bind(station.latitude)
+        .bind(station.longitude)
+        .bind(format!(
+            "{}:{snapshot_id}:{}",
+            station.station_uid, station.station_name
+        ))
         .execute(pool)
         .await
         .unwrap();

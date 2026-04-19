@@ -255,8 +255,9 @@ async fn dataset_status(
         .and_then(|snapshot| snapshot.get("source_url"))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let source_is_local = !source_url.is_empty()
-        && !(source_url.starts_with("https://") || source_url.starts_with("http://"));
+    let source_is_local = !(source_url.is_empty()
+        || source_url.starts_with("https://")
+        || source_url.starts_with("http://"));
     let looks_like_full_dataset = active_station_count >= FULL_DATASET_MIN_STATION_COUNT;
 
     Ok(Json(json!({
@@ -665,23 +666,27 @@ mod tests {
         insert_station(
             &pool,
             1,
-            "stn_enoshima_hiragana",
-            "片瀬江ノ島",
-            "江の島線",
-            "小田急電鉄",
-            35.3089,
-            139.4807,
+            StationSeed::new(
+                "stn_enoshima_hiragana",
+                "片瀬江ノ島",
+                "江の島線",
+                "小田急電鉄",
+                35.3089,
+                139.4807,
+            ),
         )
         .await;
         insert_station(
             &pool,
             1,
-            "stn_enoshima_katakana",
-            "湘南江の島",
-            "江ノ島線",
-            "湘南モノレール",
-            35.3112,
-            139.4874,
+            StationSeed::new(
+                "stn_enoshima_katakana",
+                "湘南江の島",
+                "江ノ島線",
+                "湘南モノレール",
+                35.3112,
+                139.4874,
+            ),
         )
         .await;
 
@@ -714,23 +719,27 @@ mod tests {
         insert_station(
             &pool,
             1,
-            "stn_katase",
-            "片瀬江ノ島",
-            "江の島線",
-            "小田急電鉄",
-            35.3089,
-            139.4807,
+            StationSeed::new(
+                "stn_katase",
+                "片瀬江ノ島",
+                "江の島線",
+                "小田急電鉄",
+                35.3089,
+                139.4807,
+            ),
         )
         .await;
         insert_station(
             &pool,
             1,
-            "stn_shonanenoshima",
-            "湘南江の島",
-            "江ノ島線",
-            "湘南モノレール",
-            35.3112,
-            139.4874,
+            StationSeed::new(
+                "stn_shonanenoshima",
+                "湘南江の島",
+                "江ノ島線",
+                "湘南モノレール",
+                35.3112,
+                139.4874,
+            ),
         )
         .await;
 
@@ -775,34 +784,40 @@ mod tests {
         insert_station(
             &pool,
             1,
-            "stn_fujisawa",
-            "藤沢",
-            "江の島線",
-            "小田急電鉄",
-            35.3388,
-            139.4876,
+            StationSeed::new(
+                "stn_fujisawa",
+                "藤沢",
+                "江の島線",
+                "小田急電鉄",
+                35.3388,
+                139.4876,
+            ),
         )
         .await;
         insert_station(
             &pool,
             1,
-            "stn_katase",
-            "片瀬江ノ島",
-            "江の島線",
-            "小田急電鉄",
-            35.3089,
-            139.4807,
+            StationSeed::new(
+                "stn_katase",
+                "片瀬江ノ島",
+                "江の島線",
+                "小田急電鉄",
+                35.3089,
+                139.4807,
+            ),
         )
         .await;
         insert_station(
             &pool,
             1,
-            "stn_shonanenoshima",
-            "湘南江の島",
-            "江ノ島線",
-            "小田急電鉄",
-            35.3112,
-            139.4874,
+            StationSeed::new(
+                "stn_shonanenoshima",
+                "湘南江の島",
+                "江ノ島線",
+                "小田急電鉄",
+                35.3112,
+                139.4874,
+            ),
         )
         .await;
 
@@ -828,23 +843,27 @@ mod tests {
         insert_station(
             &pool,
             1,
-            "stn_enoshima_hiragana",
-            "片瀬江ノ島",
-            "江の島線",
-            "小田急電鉄",
-            35.3089,
-            139.4807,
+            StationSeed::new(
+                "stn_enoshima_hiragana",
+                "片瀬江ノ島",
+                "江の島線",
+                "小田急電鉄",
+                35.3089,
+                139.4807,
+            ),
         )
         .await;
         insert_station(
             &pool,
             1,
-            "stn_enoshima_katakana",
-            "湘南江の島",
-            "江ノ島線",
-            "湘南モノレール",
-            35.3112,
-            139.4874,
+            StationSeed::new(
+                "stn_enoshima_katakana",
+                "湘南江の島",
+                "江ノ島線",
+                "湘南モノレール",
+                35.3112,
+                139.4874,
+            ),
         )
         .await;
 
@@ -880,23 +899,27 @@ mod tests {
         insert_station(
             &pool,
             1,
-            "stn_central_jr",
-            "新宿",
-            "中央線",
-            "東日本旅客鉄道",
-            35.6900,
-            139.7000,
+            StationSeed::new(
+                "stn_central_jr",
+                "新宿",
+                "中央線",
+                "東日本旅客鉄道",
+                35.6900,
+                139.7000,
+            ),
         )
         .await;
         insert_station(
             &pool,
             1,
-            "stn_central_subway",
-            "中野坂上",
-            "中央線",
-            "東京地下鉄",
-            35.6970,
-            139.6820,
+            StationSeed::new(
+                "stn_central_subway",
+                "中野坂上",
+                "中央線",
+                "東京地下鉄",
+                35.6970,
+                139.6820,
+            ),
         )
         .await;
 
@@ -983,22 +1006,42 @@ mod tests {
         .unwrap();
     }
 
-    async fn insert_station(
-        pool: &AnyPool,
-        snapshot_id: i64,
-        station_uid: &str,
-        station_name: &str,
-        line_name: &str,
-        operator_name: &str,
+    struct StationSeed<'a> {
+        station_uid: &'a str,
+        station_name: &'a str,
+        line_name: &'a str,
+        operator_name: &'a str,
         latitude: f64,
         longitude: f64,
-    ) {
+    }
+
+    impl<'a> StationSeed<'a> {
+        fn new(
+            station_uid: &'a str,
+            station_name: &'a str,
+            line_name: &'a str,
+            operator_name: &'a str,
+            latitude: f64,
+            longitude: f64,
+        ) -> Self {
+            Self {
+                station_uid,
+                station_name,
+                line_name,
+                operator_name,
+                latitude,
+                longitude,
+            }
+        }
+    }
+
+    async fn insert_station(pool: &AnyPool, snapshot_id: i64, station: StationSeed<'_>) {
         sqlx::query(
             "INSERT INTO station_identities (station_uid, canonical_name)
              VALUES (?, ?)",
         )
-        .bind(station_uid)
-        .bind(station_name)
+        .bind(station.station_uid)
+        .bind(station.station_name)
         .execute(pool)
         .await
         .unwrap();
@@ -1016,15 +1059,16 @@ mod tests {
                change_hash
              ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
         )
-        .bind(station_uid)
+        .bind(station.station_uid)
         .bind(snapshot_id)
-        .bind(station_name)
-        .bind(line_name)
-        .bind(operator_name)
-        .bind(latitude)
-        .bind(longitude)
+        .bind(station.station_name)
+        .bind(station.line_name)
+        .bind(station.operator_name)
+        .bind(station.latitude)
+        .bind(station.longitude)
         .bind(format!(
-            "{station_uid}:{snapshot_id}:{line_name}:{station_name}"
+            "{}:{snapshot_id}:{}:{}",
+            station.station_uid, station.line_name, station.station_name
         ))
         .execute(pool)
         .await

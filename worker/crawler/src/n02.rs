@@ -9,7 +9,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sqlx::{Any, AnyPool, Row, Transaction};
+use sqlx::{any::AnyRow, Any, AnyPool, Row, Transaction};
 use station_shared::db::SqlDialect;
 use zip::ZipArchive;
 
@@ -265,7 +265,7 @@ fn parse_feature_collection(
     source_version: Option<String>,
 ) -> Result<ParsedSnapshot> {
     let feature_collection: RawFeatureCollection =
-        serde_json::from_slice(&geojson_bytes).context("failed to parse N02 station GeoJSON")?;
+        serde_json::from_slice(geojson_bytes).context("failed to parse N02 station GeoJSON")?;
 
     let parsed_features = feature_collection.features.len();
     let mut grouped: BTreeMap<LogicalStationKey, Vec<Vec<[f64; 2]>>> = BTreeMap::new();
@@ -288,6 +288,30 @@ fn parse_feature_collection(
         parsed_features,
         stations,
     })
+}
+
+fn row_string(row: &AnyRow, column: &str) -> Result<String> {
+    match row.try_get::<String, _>(column) {
+        Ok(value) => Ok(value),
+        Err(_) => {
+            let bytes = row.try_get::<Vec<u8>, _>(column)?;
+            String::from_utf8(bytes)
+                .with_context(|| format!("column '{column}' contained non-utf8 bytes"))
+        }
+    }
+}
+
+fn row_optional_string(row: &AnyRow, column: &str) -> Result<Option<String>> {
+    match row.try_get::<Option<String>, _>(column) {
+        Ok(value) => Ok(value),
+        Err(_) => row
+            .try_get::<Option<Vec<u8>>, _>(column)?
+            .map(|bytes| {
+                String::from_utf8(bytes)
+                    .with_context(|| format!("column '{column}' contained non-utf8 bytes"))
+            })
+            .transpose(),
+    }
 }
 
 async fn persist_snapshot(
@@ -498,8 +522,8 @@ async fn fetch_identity_names(
     let mut names = BTreeMap::new();
     for row in rows {
         names.insert(
-            row.try_get::<String, _>("station_uid")?,
-            row.try_get::<String, _>("canonical_name")?,
+            row_string(&row, "station_uid")?,
+            row_string(&row, "canonical_name")?,
         );
     }
 
@@ -653,17 +677,17 @@ async fn fetch_latest_versions(
     for row in rows {
         let version = ExistingVersion {
             id: row.try_get::<i64, _>("id")?,
-            station_uid: row.try_get::<String, _>("station_uid")?,
-            source_station_code: row.try_get::<Option<String>, _>("source_station_code")?,
-            source_group_code: row.try_get::<Option<String>, _>("source_group_code")?,
-            station_name: row.try_get::<String, _>("station_name")?,
-            line_name: row.try_get::<String, _>("line_name")?,
-            operator_name: row.try_get::<String, _>("operator_name")?,
+            station_uid: row_string(&row, "station_uid")?,
+            source_station_code: row_optional_string(&row, "source_station_code")?,
+            source_group_code: row_optional_string(&row, "source_group_code")?,
+            station_name: row_string(&row, "station_name")?,
+            line_name: row_string(&row, "line_name")?,
+            operator_name: row_string(&row, "operator_name")?,
             latitude: row.try_get::<f64, _>("latitude")?,
             longitude: row.try_get::<f64, _>("longitude")?,
-            geometry_geojson: row.try_get::<Option<String>, _>("geometry_geojson")?,
-            status: row.try_get::<String, _>("status")?,
-            change_hash: row.try_get::<String, _>("change_hash")?,
+            geometry_geojson: row_optional_string(&row, "geometry_geojson")?,
+            status: row_string(&row, "status")?,
+            change_hash: row_string(&row, "change_hash")?,
         };
 
         versions.insert(version.station_uid.clone(), version);
@@ -776,7 +800,7 @@ async fn fetch_inserted_version_ids(
     let mut version_ids = BTreeMap::new();
     for row in rows {
         version_ids.insert(
-            row.try_get::<String, _>("station_uid")?,
+            row_string(&row, "station_uid")?,
             row.try_get::<i64, _>("id")?,
         );
     }
