@@ -247,12 +247,19 @@ async fn dataset_status(
     .await
     .map_err(internal_error)?
     .map(|row| {
-        json!({
-            "id": row.try_get::<i64, _>("id").ok(),
-            "source_version": decode_optional_string(&row, "source_version").ok().flatten(),
-            "source_url": decode_required_string(&row, "source_url").ok(),
-        })
+        let id = row.try_get::<i64, _>("id")?;
+        let source_version = decode_optional_string(&row, "source_version")
+            .map_err(|err| sqlx::Error::Decode(err.into()))?;
+        let source_url = decode_required_string(&row, "source_url")
+            .map_err(|err| sqlx::Error::Decode(err.into()))?;
+
+        Ok::<Value, sqlx::Error>(json!({
+            "id": id,
+            "source_version": source_version,
+            "source_url": source_url,
+        }))
     });
+    let active_snapshot = active_snapshot.transpose().map_err(internal_error)?;
 
     let source_url = active_snapshot
         .as_ref()
@@ -589,7 +596,10 @@ fn text_group_sql(dialect: SqlDialect, column: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use axum::extract::{Path, Query, State};
+    use axum::{
+        extract::{Path, Query, State},
+        http::StatusCode,
+    };
     use sqlx::{any::AnyPoolOptions, AnyPool};
     use station_shared::{
         config::{AppConfig, DatabaseType},
@@ -1091,6 +1101,28 @@ mod tests {
             response["active_snapshot"]["source_version"].as_str(),
             Some("N02-25")
         );
+    }
+
+    #[tokio::test]
+    async fn dataset_status_surfaces_snapshot_decode_failures() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO source_snapshots (id, source_name, source_kind, source_version, source_url, source_sha256)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(1_i64)
+        .bind(N02_SOURCE_NAME)
+        .bind("geojson_zip_entry")
+        .bind("N02-25")
+        .bind(vec![0xff_u8])
+        .bind("sha-1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let error = dataset_status(State(test_state(pool))).await.unwrap_err();
+
+        assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     fn test_state(pool: AnyPool) -> AppState {

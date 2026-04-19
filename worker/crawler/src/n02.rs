@@ -65,6 +65,20 @@ impl PersistChunkConfig {
             SqlDialect::Postgres | SqlDialect::Mysql => self,
         }
     }
+
+    fn validate(self) -> Result<Self> {
+        if self.write_chunk_size == 0 {
+            return Err(anyhow!(
+                "invalid PersistChunkConfig: write_chunk_size must be greater than 0"
+            ));
+        }
+        if self.close_chunk_size == 0 {
+            return Err(anyhow!(
+                "invalid PersistChunkConfig: close_chunk_size must be greater than 0"
+            ));
+        }
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -240,7 +254,7 @@ pub async fn ingest_snapshot_with_config(
     zip_bytes: &[u8],
     chunk_config: PersistChunkConfig,
 ) -> Result<IngestReport> {
-    let chunk_config = chunk_config.clamp_for_dialect(dialect);
+    let chunk_config = chunk_config.clamp_for_dialect(dialect).validate()?;
     let total_start = Instant::now();
     let source_sha256 = sha256_hex(zip_bytes);
     let parsed_snapshot = parse_snapshot_timed(zip_bytes, source_url)?;
@@ -1317,6 +1331,29 @@ mod tests {
 
         assert_eq!(chunk_config.write_chunk_size, SQLITE_SAFE_WRITE_CHUNK_SIZE);
         assert_eq!(chunk_config.close_chunk_size, SQLITE_SAFE_CLOSE_CHUNK_SIZE);
+    }
+
+    #[test]
+    fn zero_chunk_sizes_are_rejected() {
+        let write_error = PersistChunkConfig {
+            write_chunk_size: 0,
+            close_chunk_size: 1,
+        }
+        .validate()
+        .unwrap_err();
+        let close_error = PersistChunkConfig {
+            write_chunk_size: 1,
+            close_chunk_size: 0,
+        }
+        .validate()
+        .unwrap_err();
+
+        assert!(write_error
+            .to_string()
+            .contains("write_chunk_size must be greater than 0"));
+        assert!(close_error
+            .to_string()
+            .contains("close_chunk_size must be greater than 0"));
     }
 
     #[test]

@@ -286,6 +286,7 @@ async fn fetch_latest_snapshot(
 }
 
 async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<LatestMetrics> {
+    let station_uid_prefix_match = station_uid_prefix_match_sql(dialect, "station_uid");
     let sql = format!(
         "SELECT
            {} AS station_count,
@@ -297,7 +298,7 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
            {} AS out_of_range_coordinate_count,
            {} AS suspicious_coordinate_count
          FROM stations_latest
-         WHERE substr(station_uid, 1, 8) = ?",
+         WHERE {station_uid_prefix_match}",
         integer_aggregate_sql(dialect, "COUNT(*)"),
         integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "line_name")),
         integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "operator_name")),
@@ -358,12 +359,13 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
 }
 
 async fn fetch_duplicate_station_uid_count(pool: &AnyPool, dialect: SqlDialect) -> Result<i64> {
+    let station_uid_prefix_match = station_uid_prefix_match_sql(dialect, "station_uid");
     let sql = format!(
         "SELECT {} AS duplicate_station_uid_count
          FROM (
            SELECT station_uid
            FROM stations_latest
-           WHERE substr(station_uid, 1, 8) = ?
+           WHERE {station_uid_prefix_match}
            GROUP BY station_uid
            HAVING COUNT(*) > 1
          ) duplicate_station_uids",
@@ -382,6 +384,7 @@ async fn fetch_change_summary(
     dialect: SqlDialect,
     snapshot_id: i64,
 ) -> Result<ChangeSummary> {
+    let station_uid_prefix_match = station_uid_prefix_match_sql(dialect, "station_uid");
     let counts_sql = format!(
         "SELECT
            {} AS created_count,
@@ -389,7 +392,7 @@ async fn fetch_change_summary(
            {} AS removed_count
          FROM station_change_events
          WHERE snapshot_id = ?
-           AND substr(station_uid, 1, 8) = ?",
+           AND {station_uid_prefix_match}",
         integer_aggregate_sql(
             dialect,
             "SUM(CASE WHEN change_kind = 'created' THEN 1 ELSE 0 END)"
@@ -413,7 +416,7 @@ async fn fetch_change_summary(
         "SELECT {} AS latest_snapshot_version_count
          FROM station_versions
          WHERE snapshot_id = ?
-           AND substr(station_uid, 1, 8) = ?",
+           AND {station_uid_prefix_match}",
         integer_aggregate_sql(dialect, "COUNT(*)"),
     );
     let latest_versions = sqlx::query(&dialect.statement(&latest_versions_sql))
@@ -645,6 +648,14 @@ fn distinct_text_count_sql(dialect: SqlDialect, column: &str) -> String {
     match dialect {
         SqlDialect::Mysql => format!("COUNT(DISTINCT CAST({column} AS BINARY))"),
         SqlDialect::Postgres | SqlDialect::Sqlite => format!("COUNT(DISTINCT {column})"),
+    }
+}
+
+fn station_uid_prefix_match_sql(dialect: SqlDialect, column: &str) -> String {
+    let prefix_expr = format!("substr({column}, 1, {})", STATION_UID_PREFIX.len());
+    match dialect {
+        SqlDialect::Mysql => format!("{prefix_expr} COLLATE utf8mb4_bin = ?"),
+        SqlDialect::Postgres | SqlDialect::Sqlite => format!("{prefix_expr} = ?"),
     }
 }
 
@@ -951,6 +962,14 @@ mod tests {
 
         assert_eq!(check.status, ValidationStatus::Ok);
         assert_eq!(check.observed, json!("https://example.com/N02.zip"));
+    }
+
+    #[test]
+    fn mysql_station_uid_prefix_match_uses_binary_collation() {
+        assert_eq!(
+            station_uid_prefix_match_sql(SqlDialect::Mysql, "station_uid"),
+            "substr(station_uid, 1, 8) COLLATE utf8mb4_bin = ?"
+        );
     }
 
     async fn test_pool() -> AnyPool {
