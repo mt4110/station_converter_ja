@@ -18,6 +18,7 @@ use tracing::{error, info};
 
 const FULL_DATASET_MIN_STATION_COUNT: i64 = 10_000;
 const N02_SOURCE_NAME: &str = "ksj_n02_station";
+const N02_STATION_UID_PREFIX: &str = "stn_n02_";
 
 #[derive(Clone)]
 struct AppState {
@@ -192,13 +193,18 @@ async fn search_stations(
 async fn dataset_status(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let n02_where_clause = format!(
+        "WHERE substr(station_uid, 1, {}) = ?",
+        N02_STATION_UID_PREFIX.len()
+    );
     let counts_sql = format!(
         "SELECT
            {} AS active_station_count,
            {} AS distinct_station_name_count,
            {} AS distinct_line_count,
            {} AS active_version_snapshot_count
-         FROM stations_latest",
+         FROM stations_latest
+         {n02_where_clause}",
         integer_aggregate_sql(state.dialect, "COUNT(*)"),
         integer_aggregate_sql(
             state.dialect,
@@ -211,6 +217,7 @@ async fn dataset_status(
         integer_aggregate_sql(state.dialect, "COUNT(DISTINCT snapshot_id)"),
     );
     let counts = sqlx::query(&state.dialect.statement(&counts_sql))
+        .bind(N02_STATION_UID_PREFIX)
         .fetch_one(&state.pool)
         .await
         .map_err(internal_error)?;
@@ -1028,7 +1035,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dataset_status_uses_latest_n02_snapshot_metadata() {
+    async fn dataset_status_scopes_counts_to_n02_rows_and_uses_latest_snapshot_metadata() {
         let pool = test_pool().await;
         insert_snapshot(&pool, 24).await;
         insert_snapshot(&pool, 25).await;
@@ -1036,7 +1043,7 @@ mod tests {
             &pool,
             24,
             StationSeed::new(
-                "stn_shinjuku",
+                "stn_n02_shinjuku",
                 "新宿",
                 "中央線",
                 "東日本旅客鉄道",
@@ -1049,7 +1056,7 @@ mod tests {
             &pool,
             25,
             StationSeed::new(
-                "stn_shibuya",
+                "stn_n02_shibuya",
                 "渋谷",
                 "山手線",
                 "東日本旅客鉄道",
@@ -1058,10 +1065,25 @@ mod tests {
             ),
         )
         .await;
+        insert_station(
+            &pool,
+            25,
+            StationSeed::new(
+                "stn_other_network",
+                "ノイズ駅",
+                "ノイズ線",
+                "ノイズ交通",
+                35.6000,
+                139.6000,
+            ),
+        )
+        .await;
 
         let response = dataset_status(State(test_state(pool))).await.unwrap().0;
 
         assert_eq!(response["active_station_count"].as_i64(), Some(2));
+        assert_eq!(response["distinct_station_name_count"].as_i64(), Some(2));
+        assert_eq!(response["distinct_line_count"].as_i64(), Some(2));
         assert_eq!(response["active_version_snapshot_count"].as_i64(), Some(2));
         assert_eq!(response["active_snapshot"]["id"].as_i64(), Some(25));
         assert_eq!(

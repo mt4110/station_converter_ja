@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const ADDRESS_SEARCH_URL = "https://msearch.gsi.go.jp/address-search/AddressSearch";
+const MAX_QUERY_LENGTH = 120;
 
 type AddressCandidate = {
   title: string;
@@ -114,6 +115,18 @@ export async function GET(request: NextRequest) {
       resolved_query: query,
       fallback_used: false
     });
+  }
+
+  if (query.length > MAX_QUERY_LENGTH) {
+    return NextResponse.json(
+      {
+        error: "query_too_long",
+        max_query_length: MAX_QUERY_LENGTH
+      },
+      {
+        status: 400
+      }
+    );
   }
 
   const municipalityQuery = extractMunicipalityQuery(query);

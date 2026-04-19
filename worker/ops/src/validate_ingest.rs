@@ -520,12 +520,12 @@ fn source_url_quality_check(source_url: &str) -> ValidationCheck {
         );
     }
 
-    if trimmed.starts_with("file://") || trimmed.starts_with('/') {
+    if !trimmed.starts_with("https://") && !trimmed.starts_with("http://") {
         return warning_check(
             "source_url_quality",
             json!(trimmed),
             json!("remote_or_canonical_url"),
-            Some("source_url points to a local file".to_string()),
+            Some("source_url is not an http(s) URL".to_string()),
         );
     }
 
@@ -934,6 +934,23 @@ mod tests {
         assert_eq!(report.status, ValidationStatus::Failed);
         assert_eq!(min_station_check.status, ValidationStatus::Failed);
         assert_eq!(min_station_check.observed, json!(1));
+    }
+
+    #[test]
+    fn source_url_quality_warns_on_relative_paths() {
+        let check = source_url_quality_check("fixtures/N02.zip");
+
+        assert_eq!(check.status, ValidationStatus::Warning);
+        assert_eq!(check.observed, json!("fixtures/N02.zip"));
+        assert_eq!(check.expected, json!("remote_or_canonical_url"));
+    }
+
+    #[test]
+    fn source_url_quality_accepts_https_urls() {
+        let check = source_url_quality_check("https://example.com/N02.zip");
+
+        assert_eq!(check.status, ValidationStatus::Ok);
+        assert_eq!(check.observed, json!("https://example.com/N02.zip"));
     }
 
     async fn test_pool() -> AnyPool {

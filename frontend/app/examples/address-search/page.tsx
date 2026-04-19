@@ -116,7 +116,7 @@ export default function AddressSearchPage() {
     setLineLoading(true);
 
     try {
-      setLineResult(await listLineStations(station.line_name));
+      setLineResult(await listLineStations(station.line_name, station.operator_name));
       setSelectedStationUid(station.station_uid);
     } catch (nextError) {
       setLineResult(null);
@@ -192,7 +192,10 @@ export default function AddressSearchPage() {
     setSelectedStationUid(station.station_uid);
     setError(null);
 
-    if (lineResult?.line_name === station.line_name) {
+    if (
+      lineResult?.line_name === station.line_name &&
+      (lineResult.operator_name ?? null) === station.operator_name
+    ) {
       return;
     }
 
