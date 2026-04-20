@@ -4,42 +4,40 @@ set -euo pipefail
 mkdir -p artifacts/sqlite
 
 DB_PATH="${1:-storage/sqlite/stations.sqlite3}"
+RELEASE_VERSION_INPUT="${2:-}"
 
 if [[ ! -f "$DB_PATH" ]]; then
   echo "SQLite DB not found: $DB_PATH" >&2
   exit 1
 fi
 
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-OUT_DB="artifacts/sqlite/stations-${STAMP}.sqlite3"
-OUT_SUM="artifacts/sqlite/checksums-${STAMP}.txt"
-OUT_MANIFEST="artifacts/sqlite/manifest-${STAMP}.txt"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-if command -v sha256sum >/dev/null 2>&1; then
-  CHECKSUM_CMD=(sha256sum)
-elif command -v shasum >/dev/null 2>&1; then
-  CHECKSUM_CMD=(shasum -a 256)
+if [[ -n "$RELEASE_VERSION_INPUT" ]]; then
+  RELEASE_VERSION="$RELEASE_VERSION_INPUT"
 else
-  echo "sha256 checksum command not found" >&2
-  exit 1
+  SHORT_SHA="$(git -C "$ROOT_DIR" rev-parse --short HEAD)"
+  DIRTY_SUFFIX=""
+  if [[ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=no)" ]]; then
+    DIRTY_SUFFIX="-dirty"
+  fi
+  RELEASE_VERSION="dev-${SHORT_SHA}${DIRTY_SUFFIX}"
 fi
 
-cp "$DB_PATH" "$OUT_DB"
-CHECKSUM_LINE="$("${CHECKSUM_CMD[@]}" "$OUT_DB")"
-printf '%s\n' "$CHECKSUM_LINE" > "$OUT_SUM"
-CHECKSUM_VALUE="$(printf '%s\n' "$CHECKSUM_LINE" | awk '{print $1}')"
-SIZE_BYTES="$(wc -c < "$OUT_DB" | tr -d ' ')"
+SAFE_RELEASE_VERSION="$(printf '%s' "$RELEASE_VERSION" | tr '/[:space:]' '--')"
+BUNDLE_DIR="$ROOT_DIR/artifacts/sqlite/station_converter_ja-${SAFE_RELEASE_VERSION}-sqlite-$(date -u +%Y%m%dT%H%M%SZ)"
 
-cat > "$OUT_MANIFEST" <<EOF
-name=station_converter_ja sqlite artifact
-created_at_utc=${STAMP}
-file=$(basename "$OUT_DB")
-sha256=${CHECKSUM_VALUE}
-size_bytes=${SIZE_BYTES}
-checksum_file=$(basename "$OUT_SUM")
-EOF
+python3 "$ROOT_DIR/scripts/build_release_bundle.py" \
+  --repo-root "$ROOT_DIR" \
+  --sqlite-path "$DB_PATH" \
+  --bundle-dir "$BUNDLE_DIR" \
+  --release-version "$RELEASE_VERSION" \
+  --generated-at "$STAMP"
 
-echo "packaged:"
-echo "  $OUT_DB"
-echo "  $OUT_SUM"
-echo "  $OUT_MANIFEST"
+python3 "$ROOT_DIR/scripts/verify_release_bundle.py" --bundle-dir "$BUNDLE_DIR"
+
+printf '%s\n' "$BUNDLE_DIR" > "$ROOT_DIR/artifacts/sqlite/latest-bundle.txt"
+
+echo "packaged bundle:"
+echo "  $BUNDLE_DIR"

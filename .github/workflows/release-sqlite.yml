@@ -1,0 +1,98 @@
+name: release-sqlite
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: station_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_password
+        ports:
+          - 3215:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d station_db"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build SQLite release bundle
+        run: ./scripts/release_sqlite_artifact.sh postgres "${GITHUB_REF_NAME}"
+
+      - name: Resolve bundle directory
+        id: bundle
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="$(cat artifacts/sqlite/latest-bundle.txt)"
+          echo "dir=${BUNDLE_DIR}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.bundle.outputs.dir }}/stations.sqlite3
+
+      - name: Generate SBOM attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.bundle.outputs.dir }}/stations.sqlite3
+          sbom-path: ${{ steps.bundle.outputs.dir }}/SBOM.spdx.json
+
+      - name: Publish GitHub Release
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          BUNDLE_DIR="${{ steps.bundle.outputs.dir }}"
+          ASSETS=(
+            "$BUNDLE_DIR/stations.sqlite3"
+            "$BUNDLE_DIR/manifest.json"
+            "$BUNDLE_DIR/SOURCE_METADATA.json"
+            "$BUNDLE_DIR/checksums.txt"
+            "$BUNDLE_DIR/CHANGELOG.md"
+            "$BUNDLE_DIR/RELEASE_NOTES.md"
+            "$BUNDLE_DIR/README_SQLITE.md"
+            "$BUNDLE_DIR/SBOM.spdx.json"
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$TAG" --title "$TAG" --notes-file "$BUNDLE_DIR/RELEASE_NOTES.md"
+          else
+            gh release create "$TAG" \
+              "${ASSETS[@]}" \
+              --verify-tag \
+              --title "$TAG" \
+              --notes-file "$BUNDLE_DIR/RELEASE_NOTES.md"
+          fi
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-release-${{ github.ref_name }}
+          path: ${{ steps.bundle.outputs.dir }}
+          if-no-files-found: error

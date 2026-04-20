@@ -57,21 +57,32 @@ if ! gh auth status >/dev/null 2>&1; then
   exit 1
 fi
 
-"$ROOT_DIR/scripts/release_sqlite_artifact.sh" "$DB_TYPE"
+"$ROOT_DIR/scripts/release_sqlite_artifact.sh" "$DB_TYPE" "$RELEASE_TAG"
 
-LATEST_MANIFEST="$(find "$ROOT_DIR/artifacts/sqlite" -maxdepth 1 -type f -name 'manifest-*.txt' | sort | tail -n 1)"
-
-if [[ -z "$LATEST_MANIFEST" ]]; then
-  echo "no manifest found under artifacts/sqlite" >&2
+LATEST_BUNDLE_FILE="$ROOT_DIR/artifacts/sqlite/latest-bundle.txt"
+if [[ ! -f "$LATEST_BUNDLE_FILE" ]]; then
+  echo "latest bundle marker not found: $LATEST_BUNDLE_FILE" >&2
   exit 1
 fi
 
-STAMP="${LATEST_MANIFEST##*/manifest-}"
-STAMP="${STAMP%.txt}"
-SQLITE_BUNDLE="$ROOT_DIR/artifacts/sqlite/stations-${STAMP}.sqlite3"
-CHECKSUM_BUNDLE="$ROOT_DIR/artifacts/sqlite/checksums-${STAMP}.txt"
+BUNDLE_DIR="$(cat "$LATEST_BUNDLE_FILE")"
+if [[ ! -d "$BUNDLE_DIR" ]]; then
+  echo "bundle directory not found: $BUNDLE_DIR" >&2
+  exit 1
+fi
 
-for path in "$SQLITE_BUNDLE" "$CHECKSUM_BUNDLE" "$LATEST_MANIFEST"; do
+ASSET_PATHS=(
+  "$BUNDLE_DIR/stations.sqlite3"
+  "$BUNDLE_DIR/manifest.json"
+  "$BUNDLE_DIR/SOURCE_METADATA.json"
+  "$BUNDLE_DIR/checksums.txt"
+  "$BUNDLE_DIR/CHANGELOG.md"
+  "$BUNDLE_DIR/RELEASE_NOTES.md"
+  "$BUNDLE_DIR/README_SQLITE.md"
+  "$BUNDLE_DIR/SBOM.spdx.json"
+)
+
+for path in "${ASSET_PATHS[@]}"; do
   if [[ ! -f "$path" ]]; then
     echo "missing release bundle file: $path" >&2
     exit 1
@@ -79,16 +90,19 @@ for path in "$SQLITE_BUNDLE" "$CHECKSUM_BUNDLE" "$LATEST_MANIFEST"; do
 done
 
 if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-  gh release create "$RELEASE_TAG" --verify-tag --generate-notes
+  gh release create "$RELEASE_TAG" \
+    "${ASSET_PATHS[@]}" \
+    --verify-tag \
+    --title "$RELEASE_TAG" \
+    --notes-file "$BUNDLE_DIR/RELEASE_NOTES.md"
+else
+  gh release upload "$RELEASE_TAG" "${ASSET_PATHS[@]}" --clobber
+  gh release edit "$RELEASE_TAG" \
+    --title "$RELEASE_TAG" \
+    --notes-file "$BUNDLE_DIR/RELEASE_NOTES.md"
 fi
 
-gh release upload "$RELEASE_TAG" \
-  "$SQLITE_BUNDLE" \
-  "$CHECKSUM_BUNDLE" \
-  "$LATEST_MANIFEST" \
-  --clobber
-
 echo "uploaded release assets for ${RELEASE_TAG}:"
-echo "  $SQLITE_BUNDLE"
-echo "  $CHECKSUM_BUNDLE"
-echo "  $LATEST_MANIFEST"
+for path in "${ASSET_PATHS[@]}"; do
+  echo "  $path"
+done

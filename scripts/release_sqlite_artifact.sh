@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DB_TYPE="${1:-${DATABASE_TYPE:-postgres}}"
+RELEASE_VERSION="${2:-}"
 
 case "$DB_TYPE" in
   postgres|mysql)
@@ -59,6 +60,6 @@ echo "exporting SQLite artifact from ${DB_TYPE}"
 cargo run -p station-ops -- export-sqlite
 
 echo "packaging SQLite artifact from ${SQLITE_PATH}"
-"$(cd "$(dirname "$0")" && pwd)/package_sqlite_release.sh" "$SQLITE_PATH"
+"$(cd "$(dirname "$0")" && pwd)/package_sqlite_release.sh" "$SQLITE_PATH" "$RELEASE_VERSION"
 
 echo "release artifact ready under artifacts/sqlite"

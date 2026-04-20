@@ -140,6 +140,12 @@ Outputs are written to `artifacts/sqlite/`.
 
 ## Docs
 
+- [AGENTS.md](AGENTS.md)
+  - contributor / automation rules
+  - data, release, and API change policy
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+  - local workflow
+  - verification checklist
 - [docs/OPERATIONS.md](docs/OPERATIONS.md)
   - production runbook
   - systemd path
@@ -151,11 +157,31 @@ Outputs are written to `artifacts/sqlite/`.
 - [docs/RELEASE.md](docs/RELEASE.md)
   - artifact / release flow
   - verify scripts
+- [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
+  - SQLite release bundle contents
+  - checksum / attestation verification
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
   - runtime responsibility split
   - lock policy
 - [docs/DEPLOY.md](docs/DEPLOY.md)
   - self-hosted and cloud deployment positioning
+- [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md)
+  - canonical source and licensing boundary
+  - N05 overlay policy
+- [docs/ROADMAP.md](docs/ROADMAP.md)
+  - remaining priorities
+  - what not to do yet
+  - milestone plan
+
+## I want to...
+
+- ship or verify the SQLite artifact: [docs/RELEASE.md](docs/RELEASE.md), [docs/ROADMAP.md](docs/ROADMAP.md)
+- inspect the release bundle contents: [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
+- run the API locally: [README.md](README.md), [API_SPEC.md](API_SPEC.md), [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- self-host in production: [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/DEPLOY.md](docs/DEPLOY.md)
+- inspect the schema and example SQL: [docs/DATABASE.md](docs/DATABASE.md)
+- confirm source and licensing policy: [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md), [docs/ROADMAP.md](docs/ROADMAP.md)
+- see the next remaining tasks: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Data Policy
 
@@ -181,6 +207,7 @@ Included:
 - N02 one-shot ingest
 - initial `created / updated / removed` diff handling
 - PostgreSQL / MySQL / SQLite artifact delivery
+- product-grade SQLite release bundle
 - example frontend
 - self-hosted systemd path
 
@@ -188,6 +215,8 @@ Not yet included:
 
 - N05 overlay parser
 - production-ready OpenAPI
+- freshness watcher / publish pipeline
+- product-grade data quality gates
 - full cloud resource implementations
 
 ## License

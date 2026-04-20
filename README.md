@@ -232,6 +232,12 @@ GitHub Release までまとめて公開する:
 
 ## Docs
 
+- [AGENTS.md](AGENTS.md)
+  - contributor / automation rules
+  - data / release / API change policy
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+  - local workflow
+  - verify checklist
 - [docs/OPERATIONS.md](docs/OPERATIONS.md)
   - production runbook
   - systemd 導線
@@ -243,11 +249,31 @@ GitHub Release までまとめて公開する:
 - [docs/RELEASE.md](docs/RELEASE.md)
   - artifact / release 手順
   - verify scripts
+- [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
+  - SQLite release bundle の中身
+  - checksum / attestation verify
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
   - runtime 責務分離
   - lock 方針
 - [docs/DEPLOY.md](docs/DEPLOY.md)
   - self-hosted / cloud skeleton の位置づけ
+- [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md)
+  - canonical source と license 境界
+  - N05 overlay の扱い
+- [docs/ROADMAP.md](docs/ROADMAP.md)
+  - 残タスクの優先順位
+  - いまやらないこと
+  - milestone 整理
+
+## I want to...
+
+- SQLite artifact を配布 / 検証したい: [docs/RELEASE.md](docs/RELEASE.md), [docs/ROADMAP.md](docs/ROADMAP.md)
+- release bundle の中身を確認したい: [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
+- API をローカルで立ち上げたい: [README.md](README.md), [API_SPEC.md](API_SPEC.md), [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- self-host したい: [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/DEPLOY.md](docs/DEPLOY.md)
+- DB schema と example SQL を見たい: [docs/DATABASE.md](docs/DATABASE.md)
+- source / license 方針を確認したい: [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md), [docs/ROADMAP.md](docs/ROADMAP.md)
+- 次に詰める残タスクを見たい: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## データ方針
 
@@ -274,6 +300,7 @@ API、運用導線まで揃った v1 の実働基盤です。ここから overla
 - N02 one-shot ingest
 - `created / updated / removed` の初期差分反映
 - PostgreSQL / MySQL / SQLite artifact 対応
+- product-grade SQLite release bundle
 - example frontend
 - self-hosted systemd 導線
 
@@ -281,6 +308,8 @@ API、運用導線まで揃った v1 の実働基盤です。ここから overla
 
 - N05 overlay parser
 - production-ready OpenAPI
+- freshness watcher / publish pipeline
+- product-grade data quality gates
 - cloud resource の本実装
 
 ## License
