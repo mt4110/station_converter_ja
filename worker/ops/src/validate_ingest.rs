@@ -4,8 +4,11 @@ use anyhow::Result;
 use clap::Args;
 use serde::Serialize;
 use serde_json::{json, Value};
-use sqlx::{any::AnyRow, AnyPool, Row};
-use station_shared::db::SqlDialect;
+use sqlx::{AnyPool, Row};
+use station_shared::db::{
+    decode_optional_string, decode_required_string, distinct_text_count_sql, integer_aggregate_sql,
+    SqlDialect,
+};
 
 const SOURCE_NAME: &str = "ksj_n02_station";
 const STATION_UID_PREFIX: &str = "stn_n02_";
@@ -621,45 +624,6 @@ fn format_value(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         _ => value.to_string(),
-    }
-}
-
-fn decode_required_string(row: &AnyRow, column: &str) -> Result<String> {
-    match row.try_get::<String, _>(column) {
-        Ok(value) => Ok(value),
-        Err(_) => Ok(String::from_utf8(decode_bytes(row, column)?)?),
-    }
-}
-
-fn decode_optional_string(row: &AnyRow, column: &str) -> Result<Option<String>> {
-    match row.try_get::<Option<String>, _>(column) {
-        Ok(value) => Ok(value),
-        Err(_) => row
-            .try_get::<Option<Vec<u8>>, _>(column)
-            .map_err(anyhow::Error::from)?
-            .map(String::from_utf8)
-            .transpose()
-            .map_err(Into::into),
-    }
-}
-
-fn decode_bytes(row: &AnyRow, column: &str) -> Result<Vec<u8>, sqlx::Error> {
-    row.try_get::<Vec<u8>, _>(column)
-}
-
-fn integer_aggregate_sql(dialect: SqlDialect, expr: &str) -> String {
-    match dialect {
-        SqlDialect::Mysql => format!("CAST(COALESCE({expr}, 0) AS SIGNED)"),
-        SqlDialect::Postgres | SqlDialect::Sqlite => {
-            format!("CAST(COALESCE({expr}, 0) AS BIGINT)")
-        }
-    }
-}
-
-fn distinct_text_count_sql(dialect: SqlDialect, column: &str) -> String {
-    match dialect {
-        SqlDialect::Mysql => format!("COUNT(DISTINCT CAST({column} AS BINARY))"),
-        SqlDialect::Postgres | SqlDialect::Sqlite => format!("COUNT(DISTINCT {column})"),
     }
 }
 

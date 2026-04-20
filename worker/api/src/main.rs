@@ -7,10 +7,13 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::{any::AnyRow, AnyPool, Row};
+use sqlx::{AnyPool, Row};
 use station_shared::{
     config::AppConfig,
-    db::{connect_any_pool, SqlDialect},
+    db::{
+        connect_any_pool, decode_optional_string, decode_required_string, distinct_text_count_sql,
+        integer_aggregate_sql, SqlDialect,
+    },
     model::{HealthResponse, ReadyResponse, StationSummary},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -533,45 +536,11 @@ fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
     )
 }
 
-fn decode_required_string(row: &AnyRow, column: &str) -> anyhow::Result<String> {
-    match row.try_get::<String, _>(column) {
-        Ok(value) => Ok(value),
-        Err(_) => Ok(String::from_utf8(row.try_get::<Vec<u8>, _>(column)?)?),
-    }
-}
-
-fn decode_optional_string(row: &AnyRow, column: &str) -> anyhow::Result<Option<String>> {
-    match row.try_get::<Option<String>, _>(column) {
-        Ok(value) => Ok(value),
-        Err(_) => row
-            .try_get::<Option<Vec<u8>>, _>(column)?
-            .map(String::from_utf8)
-            .transpose()
-            .map_err(Into::into),
-    }
-}
-
-fn integer_aggregate_sql(dialect: SqlDialect, expr: &str) -> String {
-    match dialect {
-        SqlDialect::Mysql => format!("CAST(COALESCE({expr}, 0) AS SIGNED)"),
-        SqlDialect::Postgres | SqlDialect::Sqlite => {
-            format!("CAST(COALESCE({expr}, 0) AS BIGINT)")
-        }
-    }
-}
-
 #[cfg(test)]
 fn nullable_integer_aggregate_sql(dialect: SqlDialect, expr: &str) -> String {
     match dialect {
         SqlDialect::Mysql => format!("CAST({expr} AS SIGNED)"),
         SqlDialect::Postgres | SqlDialect::Sqlite => format!("CAST({expr} AS BIGINT)"),
-    }
-}
-
-fn distinct_text_count_sql(dialect: SqlDialect, column: &str) -> String {
-    match dialect {
-        SqlDialect::Mysql => format!("COUNT(DISTINCT CAST({column} AS BINARY))"),
-        SqlDialect::Postgres | SqlDialect::Sqlite => format!("COUNT(DISTINCT {column})"),
     }
 }
 
@@ -636,15 +605,15 @@ mod tests {
     use sqlx::{any::AnyPoolOptions, AnyPool};
     use station_shared::{
         config::{AppConfig, DatabaseType},
-        db::{ensure_sqlx_drivers, SqlDialect},
+        db::{distinct_text_count_sql, ensure_sqlx_drivers, integer_aggregate_sql, SqlDialect},
     };
 
     use super::{
-        dataset_status, distinct_text_count_sql, integer_aggregate_sql, like_prefix_pattern,
-        line_catalog, line_stations, nullable_integer_aggregate_sql, operator_stations,
-        search_stations, station_uid_prefix_scope_arg, station_uid_prefix_scope_sql,
-        text_equals_sql, text_group_sql, text_like_sql, text_order_sql, AppState,
-        LineStationsParams, SearchParams, N02_SOURCE_NAME, N02_STATION_UID_PREFIX,
+        dataset_status, like_prefix_pattern, line_catalog, line_stations,
+        nullable_integer_aggregate_sql, operator_stations, search_stations,
+        station_uid_prefix_scope_arg, station_uid_prefix_scope_sql, text_equals_sql,
+        text_group_sql, text_like_sql, text_order_sql, AppState, LineStationsParams, SearchParams,
+        N02_SOURCE_NAME, N02_STATION_UID_PREFIX,
     };
 
     #[test]

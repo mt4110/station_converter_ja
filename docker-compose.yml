@@ -53,7 +53,7 @@ services:
       retries: 20
 
   adminer:
-    image: adminer:4
+    image: adminer:4.17.1
     container_name: station-adminer
     restart: unless-stopped
     profiles: ["dbweb"]

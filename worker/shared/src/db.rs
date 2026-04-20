@@ -1,7 +1,10 @@
 use std::sync::Once;
 
 use anyhow::Result;
-use sqlx::{any::AnyPoolOptions, AnyPool};
+use sqlx::{
+    any::{AnyPoolOptions, AnyRow},
+    AnyPool, Row,
+};
 
 use crate::config::DatabaseType;
 
@@ -59,6 +62,45 @@ impl From<&DatabaseType> for SqlDialect {
             DatabaseType::Sqlite => Self::Sqlite,
         }
     }
+}
+
+pub fn decode_required_string(row: &AnyRow, column: &str) -> Result<String> {
+    match row.try_get::<String, _>(column) {
+        Ok(value) => Ok(value),
+        Err(_) => Ok(String::from_utf8(decode_bytes(row, column)?)?),
+    }
+}
+
+pub fn decode_optional_string(row: &AnyRow, column: &str) -> Result<Option<String>> {
+    match row.try_get::<Option<String>, _>(column) {
+        Ok(value) => Ok(value),
+        Err(_) => row
+            .try_get::<Option<Vec<u8>>, _>(column)
+            .map_err(anyhow::Error::from)?
+            .map(String::from_utf8)
+            .transpose()
+            .map_err(Into::into),
+    }
+}
+
+pub fn integer_aggregate_sql(dialect: SqlDialect, expr: &str) -> String {
+    match dialect {
+        SqlDialect::Mysql => format!("CAST(COALESCE({expr}, 0) AS SIGNED)"),
+        SqlDialect::Postgres | SqlDialect::Sqlite => {
+            format!("CAST(COALESCE({expr}, 0) AS BIGINT)")
+        }
+    }
+}
+
+pub fn distinct_text_count_sql(dialect: SqlDialect, column: &str) -> String {
+    match dialect {
+        SqlDialect::Mysql => format!("COUNT(DISTINCT CAST({column} AS BINARY))"),
+        SqlDialect::Postgres | SqlDialect::Sqlite => format!("COUNT(DISTINCT {column})"),
+    }
+}
+
+fn decode_bytes(row: &AnyRow, column: &str) -> std::result::Result<Vec<u8>, sqlx::Error> {
+    row.try_get::<Vec<u8>, _>(column)
 }
 
 pub fn ensure_sqlx_drivers() {
