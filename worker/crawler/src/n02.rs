@@ -9,10 +9,10 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sqlx::{any::AnyRow, Any, AnyPool, Row, Transaction};
+use sqlx::{Any, AnyPool, Row, Transaction};
 use station_shared::{
     config::{default_ingest_close_chunk_size, default_ingest_write_chunk_size, DatabaseType},
-    db::SqlDialect,
+    db::{decode_optional_string, decode_required_string, SqlDialect},
 };
 use zip::ZipArchive;
 
@@ -318,30 +318,6 @@ fn parse_feature_collection(
     })
 }
 
-fn row_string(row: &AnyRow, column: &str) -> Result<String> {
-    match row.try_get::<String, _>(column) {
-        Ok(value) => Ok(value),
-        Err(_) => {
-            let bytes = row.try_get::<Vec<u8>, _>(column)?;
-            String::from_utf8(bytes)
-                .with_context(|| format!("column '{column}' contained non-utf8 bytes"))
-        }
-    }
-}
-
-fn row_optional_string(row: &AnyRow, column: &str) -> Result<Option<String>> {
-    match row.try_get::<Option<String>, _>(column) {
-        Ok(value) => Ok(value),
-        Err(_) => row
-            .try_get::<Option<Vec<u8>>, _>(column)?
-            .map(|bytes| {
-                String::from_utf8(bytes)
-                    .with_context(|| format!("column '{column}' contained non-utf8 bytes"))
-            })
-            .transpose(),
-    }
-}
-
 async fn persist_snapshot(
     pool: &AnyPool,
     dialect: SqlDialect,
@@ -550,8 +526,8 @@ async fn fetch_identity_names(
     let mut names = BTreeMap::new();
     for row in rows {
         names.insert(
-            row_string(&row, "station_uid")?,
-            row_string(&row, "canonical_name")?,
+            decode_required_string(&row, "station_uid")?,
+            decode_required_string(&row, "canonical_name")?,
         );
     }
 
@@ -705,17 +681,17 @@ async fn fetch_latest_versions(
     for row in rows {
         let version = ExistingVersion {
             id: row.try_get::<i64, _>("id")?,
-            station_uid: row_string(&row, "station_uid")?,
-            source_station_code: row_optional_string(&row, "source_station_code")?,
-            source_group_code: row_optional_string(&row, "source_group_code")?,
-            station_name: row_string(&row, "station_name")?,
-            line_name: row_string(&row, "line_name")?,
-            operator_name: row_string(&row, "operator_name")?,
+            station_uid: decode_required_string(&row, "station_uid")?,
+            source_station_code: decode_optional_string(&row, "source_station_code")?,
+            source_group_code: decode_optional_string(&row, "source_group_code")?,
+            station_name: decode_required_string(&row, "station_name")?,
+            line_name: decode_required_string(&row, "line_name")?,
+            operator_name: decode_required_string(&row, "operator_name")?,
             latitude: row.try_get::<f64, _>("latitude")?,
             longitude: row.try_get::<f64, _>("longitude")?,
-            geometry_geojson: row_optional_string(&row, "geometry_geojson")?,
-            status: row_string(&row, "status")?,
-            change_hash: row_string(&row, "change_hash")?,
+            geometry_geojson: decode_optional_string(&row, "geometry_geojson")?,
+            status: decode_required_string(&row, "status")?,
+            change_hash: decode_required_string(&row, "change_hash")?,
         };
 
         versions.insert(version.station_uid.clone(), version);
@@ -828,7 +804,7 @@ async fn fetch_inserted_version_ids(
     let mut version_ids = BTreeMap::new();
     for row in rows {
         version_ids.insert(
-            row_string(&row, "station_uid")?,
+            decode_required_string(&row, "station_uid")?,
             row.try_get::<i64, _>("id")?,
         );
     }

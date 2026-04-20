@@ -274,7 +274,7 @@ def http_probe(url: str, timeout: float = 0.5) -> Tuple[bool, str]:
             code = getattr(response, "status", None) or response.getcode()
             return True, f"HTTP {code}"
     except urllib.error.HTTPError as exc:
-        return exc.code < 500, f"HTTP {exc.code}"
+        return False, f"HTTP {exc.code}"
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)
 
@@ -657,8 +657,16 @@ class QuickstartApp:
         pid = item_state.get("pid")
         label = self._display_label(item, include_order=False)
         if pid and is_process_alive(pid):
-            self.message = self.t("already_running", label=label)
-            return None
+            if item["kind"] == "docker" and action == "down":
+                stop_process_group(pid)
+                item_state["status_note"] = "stopping"
+                self._save_state()
+                if not self._wait_for_managed_process_exit(item_id):
+                    self.message = self.t("stopping_item", label=label)
+                    return None
+            else:
+                self.message = self.t("already_running", label=label)
+                return None
 
         log_path = self._log_path(item_id)
         argv, cwd = self._command_spec(item, action=action)
@@ -693,6 +701,21 @@ class QuickstartApp:
         self._save_state()
         self.message = self.t("started", label=label)
         return log_path
+
+    def _wait_for_managed_process_exit(
+        self, item_id: str, timeout: float = 2.0
+    ) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            self._reconcile_processes()
+            pid = self._item_state(item_id).get("pid")
+            if not pid or not is_process_alive(pid):
+                return True
+            time.sleep(0.05)
+
+        self._reconcile_processes()
+        pid = self._item_state(item_id).get("pid")
+        return not pid or not is_process_alive(pid)
 
     def _stop_managed_item(self, item: Dict[str, Any]) -> None:
         item_state = self._item_state(item["id"])

@@ -1,6 +1,6 @@
 use std::sync::Once;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sqlx::{
     any::{AnyPoolOptions, AnyRow},
     AnyPool, Row,
@@ -67,7 +67,8 @@ impl From<&DatabaseType> for SqlDialect {
 pub fn decode_required_string(row: &AnyRow, column: &str) -> Result<String> {
     match row.try_get::<String, _>(column) {
         Ok(value) => Ok(value),
-        Err(_) => Ok(String::from_utf8(decode_bytes(row, column)?)?),
+        Err(_) => String::from_utf8(decode_bytes(row, column)?)
+            .with_context(|| format!("column '{column}' contained non-utf8 bytes")),
     }
 }
 
@@ -77,9 +78,11 @@ pub fn decode_optional_string(row: &AnyRow, column: &str) -> Result<Option<Strin
         Err(_) => row
             .try_get::<Option<Vec<u8>>, _>(column)
             .map_err(anyhow::Error::from)?
-            .map(String::from_utf8)
-            .transpose()
-            .map_err(Into::into),
+            .map(|bytes| {
+                String::from_utf8(bytes)
+                    .with_context(|| format!("column '{column}' contained non-utf8 bytes"))
+            })
+            .transpose(),
     }
 }
 
