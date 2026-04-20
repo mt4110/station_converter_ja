@@ -17,6 +17,7 @@ jobs:
       attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
+      DATABASE_TYPE: postgres
     services:
       postgres:
         image: postgres:16
@@ -43,7 +44,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build SQLite release bundle
-        run: ./scripts/release_sqlite_artifact.sh postgres "${GITHUB_REF_NAME}"
+        run: |
+          set -euo pipefail
+          cargo run -p station-ops -- migrate
+          cargo run -p station-ops -- job ingest-n02
+          ./scripts/release_sqlite_artifact.sh postgres "${GITHUB_REF_NAME}"
 
       - name: Resolve bundle directory
         id: bundle
