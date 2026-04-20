@@ -320,10 +320,14 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
         ),
         integer_aggregate_sql(
             dialect,
-            "SUM(CASE WHEN latitude < ? OR latitude > ? OR longitude < ? OR longitude > ? THEN 1 ELSE 0 END)"
+            "SUM(CASE WHEN latitude >= ? AND latitude <= ? AND longitude >= ? AND longitude <= ? AND (latitude < ? OR latitude > ? OR longitude < ? OR longitude > ?) THEN 1 ELSE 0 END)"
         ),
     );
     let row = sqlx::query(&dialect.statement(&sql))
+        .bind(HARD_MIN_LATITUDE)
+        .bind(HARD_MAX_LATITUDE)
+        .bind(HARD_MIN_LONGITUDE)
+        .bind(HARD_MAX_LONGITUDE)
         .bind(HARD_MIN_LATITUDE)
         .bind(HARD_MAX_LATITUDE)
         .bind(HARD_MIN_LONGITUDE)
@@ -945,6 +949,53 @@ mod tests {
         assert_eq!(report.status, ValidationStatus::Failed);
         assert_eq!(min_station_check.status, ValidationStatus::Failed);
         assert_eq!(min_station_check.observed, json!(1));
+    }
+
+    #[tokio::test]
+    async fn suspicious_coordinate_count_excludes_hard_out_of_range_rows() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 1, "https://example.com/N02-24_GML.zip").await;
+        insert_identity(&pool, "stn_n02_far", "範囲外駅").await;
+        insert_station_version(
+            &pool,
+            1,
+            StationVersionSeed::new("stn_n02_far", "範囲外駅", "遠方線", "遠方交通", 0.0, 0.0),
+        )
+        .await;
+        insert_change_event(&pool, 1, "stn_n02_far", "created").await;
+
+        let report = validate_ingest(
+            &pool,
+            SqlDialect::Sqlite,
+            &ValidateIngestArgs {
+                min_stations: 1,
+                min_lines: 1,
+                min_operators: 1,
+                ..ValidateIngestArgs::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Failed);
+        assert_eq!(
+            report
+                .checks
+                .iter()
+                .find(|check| check.name == "out_of_range_coordinate_count")
+                .unwrap()
+                .status,
+            ValidationStatus::Failed
+        );
+        assert_eq!(
+            report
+                .checks
+                .iter()
+                .find(|check| check.name == "suspicious_coordinate_count")
+                .unwrap()
+                .status,
+            ValidationStatus::Ok
+        );
     }
 
     #[test]

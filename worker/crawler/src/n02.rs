@@ -10,15 +10,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{any::AnyRow, Any, AnyPool, Row, Transaction};
-use station_shared::db::SqlDialect;
+use station_shared::{
+    config::{default_ingest_close_chunk_size, default_ingest_write_chunk_size, DatabaseType},
+    db::SqlDialect,
+};
 use zip::ZipArchive;
 
 const SOURCE_NAME: &str = "ksj_n02_station";
 const SOURCE_KIND: &str = "geojson_zip_entry";
 const STATION_UID_PREFIX: &str = "stn_n02_";
 const STATION_GEOJSON_PATH: &str = "UTF-8/N02-24_Station.geojson";
-const DEFAULT_INGEST_WRITE_CHUNK_SIZE: usize = 1_000;
-const DEFAULT_INGEST_CLOSE_CHUNK_SIZE: usize = 1_000;
 const SQLITE_MAX_VARIABLE_NUMBER: usize = 999;
 const SQLITE_SAFE_WRITE_CHUNK_SIZE: usize = SQLITE_MAX_VARIABLE_NUMBER / 13;
 const SQLITE_SAFE_CLOSE_CHUNK_SIZE: usize = SQLITE_MAX_VARIABLE_NUMBER - 1;
@@ -31,29 +32,23 @@ pub struct PersistChunkConfig {
 
 impl Default for PersistChunkConfig {
     fn default() -> Self {
-        Self {
-            write_chunk_size: DEFAULT_INGEST_WRITE_CHUNK_SIZE,
-            close_chunk_size: DEFAULT_INGEST_CLOSE_CHUNK_SIZE,
-        }
+        Self::for_dialect(SqlDialect::Postgres)
     }
 }
 
 impl PersistChunkConfig {
     pub fn for_dialect(dialect: SqlDialect) -> Self {
-        let write_chunk_size = match dialect {
-            SqlDialect::Mysql => 200,
-            SqlDialect::Postgres => DEFAULT_INGEST_WRITE_CHUNK_SIZE,
-            SqlDialect::Sqlite => SQLITE_SAFE_WRITE_CHUNK_SIZE,
-        };
-        let close_chunk_size = match dialect {
-            SqlDialect::Postgres | SqlDialect::Mysql => DEFAULT_INGEST_CLOSE_CHUNK_SIZE,
-            SqlDialect::Sqlite => SQLITE_SAFE_CLOSE_CHUNK_SIZE,
+        let database_type = match dialect {
+            SqlDialect::Postgres => DatabaseType::Postgres,
+            SqlDialect::Mysql => DatabaseType::Mysql,
+            SqlDialect::Sqlite => DatabaseType::Sqlite,
         };
 
         Self {
-            write_chunk_size,
-            close_chunk_size,
+            write_chunk_size: default_ingest_write_chunk_size(&database_type),
+            close_chunk_size: default_ingest_close_chunk_size(&database_type),
         }
+        .clamp_for_dialect(dialect)
     }
 
     pub fn clamp_for_dialect(self, dialect: SqlDialect) -> Self {
@@ -1319,6 +1314,29 @@ mod tests {
 
         assert_eq!(chunk_config.write_chunk_size, SQLITE_SAFE_WRITE_CHUNK_SIZE);
         assert_eq!(chunk_config.close_chunk_size, SQLITE_SAFE_CLOSE_CHUNK_SIZE);
+    }
+
+    #[test]
+    fn non_sqlite_chunk_defaults_follow_shared_config_defaults() {
+        let postgres = PersistChunkConfig::for_dialect(SqlDialect::Postgres);
+        let mysql = PersistChunkConfig::for_dialect(SqlDialect::Mysql);
+
+        assert_eq!(
+            postgres.write_chunk_size,
+            default_ingest_write_chunk_size(&DatabaseType::Postgres)
+        );
+        assert_eq!(
+            postgres.close_chunk_size,
+            default_ingest_close_chunk_size(&DatabaseType::Postgres)
+        );
+        assert_eq!(
+            mysql.write_chunk_size,
+            default_ingest_write_chunk_size(&DatabaseType::Mysql)
+        );
+        assert_eq!(
+            mysql.close_chunk_size,
+            default_ingest_close_chunk_size(&DatabaseType::Mysql)
+        );
     }
 
     #[test]

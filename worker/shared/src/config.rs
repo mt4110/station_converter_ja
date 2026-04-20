@@ -144,7 +144,7 @@ fn env_usize_optional(name: &str) -> Result<Option<usize>> {
     Ok(Some(parsed))
 }
 
-fn default_ingest_write_chunk_size(database_type: &DatabaseType) -> usize {
+pub fn default_ingest_write_chunk_size(database_type: &DatabaseType) -> usize {
     match database_type {
         DatabaseType::Postgres => 1000,
         DatabaseType::Mysql => 200,
@@ -152,7 +152,7 @@ fn default_ingest_write_chunk_size(database_type: &DatabaseType) -> usize {
     }
 }
 
-fn default_ingest_close_chunk_size(database_type: &DatabaseType) -> usize {
+pub fn default_ingest_close_chunk_size(database_type: &DatabaseType) -> usize {
     match database_type {
         DatabaseType::Postgres | DatabaseType::Mysql => 1000,
         DatabaseType::Sqlite => 998,
