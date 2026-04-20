@@ -512,7 +512,8 @@ fn normalized_catalog_limit(limit: Option<u32>) -> i64 {
 
 fn row_to_station_summary(row: sqlx::any::AnyRow) -> Result<StationSummary, sqlx::Error> {
     Ok(StationSummary {
-        station_uid: row.try_get("station_uid")?,
+        station_uid: decode_required_string(&row, "station_uid")
+            .map_err(|err| sqlx::Error::Decode(err.into()))?,
         station_name: decode_required_string(&row, "station_name")
             .map_err(|err| sqlx::Error::Decode(err.into()))?,
         line_name: decode_required_string(&row, "line_name")

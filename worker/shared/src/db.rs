@@ -67,15 +67,18 @@ impl From<&DatabaseType> for SqlDialect {
 pub fn decode_required_string(row: &AnyRow, column: &str) -> Result<String> {
     match row.try_get::<String, _>(column) {
         Ok(value) => Ok(value),
-        Err(_) => String::from_utf8(decode_bytes(row, column)?)
-            .with_context(|| format!("column '{column}' contained non-utf8 bytes")),
+        Err(err) if should_retry_string_decode_as_bytes(&err) => {
+            String::from_utf8(decode_bytes(row, column)?)
+                .with_context(|| format!("column '{column}' contained non-utf8 bytes"))
+        }
+        Err(err) => Err(err.into()),
     }
 }
 
 pub fn decode_optional_string(row: &AnyRow, column: &str) -> Result<Option<String>> {
     match row.try_get::<Option<String>, _>(column) {
         Ok(value) => Ok(value),
-        Err(_) => row
+        Err(err) if should_retry_string_decode_as_bytes(&err) => row
             .try_get::<Option<Vec<u8>>, _>(column)
             .map_err(anyhow::Error::from)?
             .map(|bytes| {
@@ -83,6 +86,7 @@ pub fn decode_optional_string(row: &AnyRow, column: &str) -> Result<Option<Strin
                     .with_context(|| format!("column '{column}' contained non-utf8 bytes"))
             })
             .transpose(),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -106,6 +110,13 @@ fn decode_bytes(row: &AnyRow, column: &str) -> std::result::Result<Vec<u8>, sqlx
     row.try_get::<Vec<u8>, _>(column)
 }
 
+fn should_retry_string_decode_as_bytes(error: &sqlx::Error) -> bool {
+    matches!(
+        error,
+        sqlx::Error::Decode(_) | sqlx::Error::ColumnDecode { .. }
+    )
+}
+
 pub fn ensure_sqlx_drivers() {
     INSTALL_DRIVERS.call_once(sqlx::any::install_default_drivers);
 }
@@ -117,4 +128,25 @@ pub async fn connect_any_pool(database_url: &str) -> Result<AnyPool> {
         .max_connections(5)
         .connect(database_url)
         .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_retry_string_decode_as_bytes;
+
+    #[test]
+    fn retries_only_for_decode_errors() {
+        assert!(should_retry_string_decode_as_bytes(&sqlx::Error::Decode(
+            "decode".into()
+        )));
+        assert!(should_retry_string_decode_as_bytes(
+            &sqlx::Error::ColumnDecode {
+                index: "station_uid".to_string(),
+                source: "decode".into(),
+            }
+        ));
+        assert!(!should_retry_string_decode_as_bytes(
+            &sqlx::Error::ColumnNotFound("station_uid".to_string())
+        ));
+    }
 }
