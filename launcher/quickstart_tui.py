@@ -86,6 +86,7 @@ UI_STRINGS = {
         "workflow_canceled": "{label} was canceled.",
         "failed_to_start_step": "failed to start step",
         "service_not_ready": "service did not become ready: {label}",
+        "service_setup_step": "setup: {step}",
         "canceled": "canceled",
     },
     "ja": {
@@ -149,6 +150,7 @@ UI_STRINGS = {
         "workflow_canceled": "{label} をキャンセルしました。",
         "failed_to_start_step": "ステップの起動に失敗しました",
         "service_not_ready": "service の ready 待ちに失敗しました: {label}",
+        "service_setup_step": "セットアップ中: {step}",
         "canceled": "キャンセル",
     },
 }
@@ -309,6 +311,7 @@ class QuickstartApp:
         self.lock = threading.RLock()
         self.processes: Dict[str, subprocess.Popen[Any]] = {}
         self.workflow_threads: Dict[str, threading.Thread] = {}
+        self.service_threads: Dict[str, threading.Thread] = {}
         self.selection = 0
         self._docker_cache: Dict[str, Tuple[float, Dict[str, str]]] = {}
         self.state = self._load_state()
@@ -709,7 +712,6 @@ class QuickstartApp:
         from_workflow: bool = False,
         workflow_item_id: Optional[str] = None,
     ) -> bool:
-        del from_workflow
         item = self.items[item_id]
         kind = item["kind"]
         label = self._display_label(item, include_order=False)
@@ -739,11 +741,18 @@ class QuickstartApp:
                 return True
             if self._needs_setup(item):
                 setup_task_id = item.get("setup_task_id")
-                if setup_task_id and not self._run_and_wait_task(
-                    setup_task_id,
-                    workflow_item_id=workflow_item_id,
-                ):
-                    return False
+                if setup_task_id:
+                    if from_workflow:
+                        if not self._run_and_wait_task(
+                            setup_task_id,
+                            workflow_item_id=workflow_item_id,
+                        ):
+                            return False
+                    else:
+                        return self._start_service_with_setup_async(
+                            item,
+                            workflow_item_id=workflow_item_id,
+                        )
             self._spawn_managed_command(item, action="command")
             return True
         if kind == "task":
@@ -800,6 +809,81 @@ class QuickstartApp:
             if not current_pid:
                 return state.get("last_exit_code", 1) == 0
             time.sleep(0.25)
+
+    def _start_service_with_setup_async(
+        self, item: Dict[str, Any], workflow_item_id: Optional[str] = None
+    ) -> bool:
+        item_id = item["id"]
+        label = self._display_label(item, include_order=False)
+        thread = self.service_threads.get(item_id)
+        if thread and thread.is_alive():
+            self.message = self.t("already_running", label=label)
+            return True
+
+        cancel_scope_id = workflow_item_id or item_id
+        setup_task_id = item.get("setup_task_id")
+        service_state = self._item_state(item_id)
+        service_state.update(
+            {
+                "started_at": now_iso(),
+                "finished_at": None,
+                "last_exit_code": None,
+                "status_note": "starting",
+                "cancel_requested": False,
+                "current_step": setup_task_id,
+                "current_step_started_at": now_iso() if setup_task_id else None,
+            }
+        )
+        self._save_state()
+
+        def runner() -> None:
+            exit_code = 0
+            canceled = False
+            try:
+                if setup_task_id and self._needs_setup(item):
+                    ok = self._run_and_wait_task(
+                        setup_task_id,
+                        workflow_item_id=cancel_scope_id,
+                    )
+                    if not ok:
+                        canceled = self._workflow_cancel_requested(cancel_scope_id)
+                        setup_state = self._item_state(setup_task_id)
+                        exit_code = setup_state.get("last_exit_code")
+                        if exit_code is None:
+                            exit_code = 130 if canceled else 1
+                        return
+
+                if self._workflow_cancel_requested(cancel_scope_id):
+                    canceled = True
+                    exit_code = 130
+                    return
+
+                self._spawn_managed_command(item, action="command")
+            except Exception:  # noqa: BLE001
+                exit_code = 1
+                service_state["status_note"] = "failed"
+            finally:
+                service_state["current_step"] = None
+                service_state["current_step_started_at"] = None
+                service_state["cancel_requested"] = False
+                if canceled:
+                    service_state["finished_at"] = now_iso()
+                    service_state["last_exit_code"] = 130
+                    service_state["status_note"] = "canceled"
+                elif exit_code != 0:
+                    service_state["finished_at"] = now_iso()
+                    service_state["last_exit_code"] = exit_code
+                    if service_state.get("status_note") == "stopping":
+                        service_state["status_note"] = "stopped"
+                    elif service_state.get("status_note") != "failed":
+                        service_state["status_note"] = "failed"
+                self._save_state()
+
+        thread = threading.Thread(target=runner, daemon=True)
+        self.service_threads[item_id] = thread
+        thread.start()
+        self.message = self.t("started", label=label)
+        return True
 
     def _wait_for_service_ready(
         self, item: Dict[str, Any], workflow_item_id: Optional[str] = None
@@ -961,10 +1045,27 @@ class QuickstartApp:
             self._save_state()
             self.message = self.t("workflow_canceling", label=label)
             return
+        if item["kind"] == "service":
+            service_thread = self.service_threads.get(item_id)
+            service_state = self._item_state(item_id)
+            if service_thread and service_thread.is_alive():
+                service_state["cancel_requested"] = True
+                service_state["status_note"] = "stopping"
+                current_step_id = service_state.get("current_step")
+                current_step = self.items.get(current_step_id) if current_step_id else None
+                if current_step and current_step["kind"] == "task":
+                    self._stop_managed_item(current_step)
+                elif service_state.get("pid"):
+                    self._stop_managed_item(item)
+                self._save_state()
+                self.message = self.t("stopping_item", label=label)
+                return
+            self._stop_managed_item(item)
+            return
         if item["kind"] == "docker":
             self._spawn_managed_command(item, action="down")
             return
-        if item["kind"] in {"service", "task"}:
+        if item["kind"] == "task":
             self._stop_managed_item(item)
             return
         self.message = self.t("stop_not_supported", label=label)
@@ -1113,6 +1214,26 @@ class QuickstartApp:
             return "ERR", f"exit {exit_code}"
 
         if kind == "service":
+            service_thread = self.service_threads.get(item["id"])
+            if service_thread and service_thread.is_alive():
+                if state.get("cancel_requested") or state.get("status_note") == "stopping":
+                    return "STOP", self.t("stopping")
+                current_step = state.get("current_step")
+                if current_step:
+                    step_item = self.items.get(current_step)
+                    step_label = (
+                        self._display_label(step_item, include_order=False)
+                        if step_item
+                        else current_step
+                    )
+                    step_elapsed = format_elapsed(
+                        elapsed_seconds_since(state.get("current_step_started_at"))
+                    )
+                    return (
+                        "BOOT",
+                        f"{self.t('service_setup_step', step=step_label)} / {step_elapsed}",
+                    )
+                return "BOOT", self.t("starting")
             url = item.get("health_url")
             port = item.get("port")
             host = item.get("host", "127.0.0.1")
@@ -1197,6 +1318,14 @@ class QuickstartApp:
                 return self.t("docker_logs_failed", error=exc)
 
         if item["kind"] == "service":
+            current_step_id = state.get("current_step")
+            if current_step_id:
+                current_step_state = self._item_state(current_step_id)
+                current_log_path = current_step_state.get("log_path")
+                if current_log_path:
+                    text = read_tail(self.root_dir / current_log_path)
+                    if text:
+                        return text
             return self.t("logs_service_hint")
 
         return ""
@@ -1258,9 +1387,9 @@ class QuickstartApp:
             lines.append("")
             lines.extend(self._render_lines(detail_lines))
 
-        if item["kind"] == "workflow":
-            workflow_state = self._item_state(item["id"])
-            current_step = workflow_state.get("current_step")
+        if item["kind"] in {"workflow", "service"}:
+            current_state = self._item_state(item["id"])
+            current_step = current_state.get("current_step")
             if current_step:
                 step_item = self.items.get(current_step)
                 step_label = (
@@ -1269,7 +1398,7 @@ class QuickstartApp:
                     else current_step
                 )
                 step_elapsed = format_elapsed(
-                    elapsed_seconds_since(workflow_state.get("current_step_started_at"))
+                    elapsed_seconds_since(current_state.get("current_step_started_at"))
                 )
                 lines.append("")
                 lines.append(f"{self.t('current_step')}: {step_label}")
