@@ -527,7 +527,7 @@ fn source_url_quality_check(source_url: &str) -> ValidationCheck {
         );
     }
 
-    if !trimmed.starts_with("https://") && !trimmed.starts_with("http://") {
+    if !is_http_url(trimmed) {
         return warning_check(
             "source_url_quality",
             json!(trimmed),
@@ -542,6 +542,14 @@ fn source_url_quality_check(source_url: &str) -> ValidationCheck {
         json!("remote_or_canonical_url"),
         None,
     )
+}
+
+fn is_http_url(url: &str) -> bool {
+    let Some((scheme, _)) = url.split_once("://") else {
+        return false;
+    };
+
+    scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
 }
 
 fn ok_check(
@@ -1013,6 +1021,14 @@ mod tests {
 
         assert_eq!(check.status, ValidationStatus::Ok);
         assert_eq!(check.observed, json!("https://example.com/N02.zip"));
+    }
+
+    #[test]
+    fn source_url_quality_accepts_uppercase_https_scheme() {
+        let check = source_url_quality_check("HTTPS://example.com/N02.zip");
+
+        assert_eq!(check.status, ValidationStatus::Ok);
+        assert_eq!(check.observed, json!("HTTPS://example.com/N02.zip"));
     }
 
     #[test]
