@@ -703,7 +703,12 @@ class QuickstartApp:
         self._save_state()
         self.message = self.t("stopping_item", label=label)
 
-    def _start_item(self, item_id: str, from_workflow: bool = False) -> bool:
+    def _start_item(
+        self,
+        item_id: str,
+        from_workflow: bool = False,
+        workflow_item_id: Optional[str] = None,
+    ) -> bool:
         del from_workflow
         item = self.items[item_id]
         kind = item["kind"]
@@ -734,7 +739,10 @@ class QuickstartApp:
                 return True
             if self._needs_setup(item):
                 setup_task_id = item.get("setup_task_id")
-                if setup_task_id and not self._run_and_wait_task(setup_task_id):
+                if setup_task_id and not self._run_and_wait_task(
+                    setup_task_id,
+                    workflow_item_id=workflow_item_id,
+                ):
                     return False
             self._spawn_managed_command(item, action="command")
             return True
@@ -783,6 +791,9 @@ class QuickstartApp:
         while True:
             self._reconcile_processes()
             if self._workflow_cancel_requested(workflow_item_id):
+                item = self.items.get(item_id)
+                if item and item["kind"] == "task":
+                    self._stop_managed_item(item)
                 return False
             state = self._item_state(item_id)
             current_pid = state.get("pid")
@@ -858,7 +869,11 @@ class QuickstartApp:
                         handle.write(f"== {step_label} ==\n")
                         handle.flush()
 
-                        ok = self._start_item(step_id, from_workflow=True)
+                        ok = self._start_item(
+                            step_id,
+                            from_workflow=True,
+                            workflow_item_id=item_id,
+                        )
                         if not ok:
                             if self._workflow_cancel_requested(item_id):
                                 canceled = True
