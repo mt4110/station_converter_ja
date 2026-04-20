@@ -113,10 +113,12 @@ async function probeLegacyDatasetStatus() {
     throw new Error("Legacy station API probe returned an invalid response.");
   }
 
+  const canQueryStations = payload.items.length > 0;
+
   return {
-    status: "ready",
+    status: canQueryStations ? "ready" : "needs_ingest",
     looks_like_full_dataset: false,
-    can_query_stations: true,
+    can_query_stations: canQueryStations,
     status_source: "legacy_search_probe",
     source_is_local: false,
     active_station_count: null,

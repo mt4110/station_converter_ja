@@ -815,15 +815,17 @@ class QuickstartApp:
     ) -> bool:
         if not already_started:
             self._start_item(item_id, from_workflow=True)
+        item = self.items.get(item_id)
         item_state = self._item_state(item_id)
         pid = item_state.get("pid")
         if not pid:
+            if item and item["kind"] == "docker":
+                return self._docker_status(item)["status"] == "running"
             return item_state.get("last_exit_code", 1) == 0
 
         while True:
             self._reconcile_processes()
             if self._workflow_cancel_requested(workflow_item_id):
-                item = self.items.get(item_id)
                 if item and item["kind"] in {"task", "docker"}:
                     self._stop_managed_item(item)
                 return False

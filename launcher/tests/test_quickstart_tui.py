@@ -86,6 +86,17 @@ class QuickstartTuiTests(unittest.TestCase):
             self.assertEqual(state.get("last_exit_code"), 0)
             self.assertIn("down", Path(down_log_path).read_text(encoding="utf-8"))
 
+    def test_run_and_wait_task_accepts_externally_running_docker_item(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config_path = write_test_config(root)
+            app = quickstart_tui.QuickstartApp(config_path)
+
+            with mock.patch.object(
+                app, "_docker_status", return_value={"status": "running", "detail": "healthy"}
+            ):
+                self.assertTrue(app._run_and_wait_task("docker_item", already_started=True))
+
 
 if __name__ == "__main__":
     unittest.main()
