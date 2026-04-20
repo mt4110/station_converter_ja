@@ -81,9 +81,7 @@ impl AppConfig {
         let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3212".to_string());
         let job_lock_dir = env::var("JOB_LOCK_DIR").unwrap_or_else(|_| "storage/locks".to_string());
         let redis_url = env::var("REDIS_URL").ok().filter(|v| !v.is_empty());
-        let ready_require_cache = env::var("READY_REQUIRE_CACHE")
-            .unwrap_or_else(|_| "false".to_string())
-            .eq_ignore_ascii_case("true");
+        let ready_require_cache = env_bool_flag("READY_REQUIRE_CACHE");
         let update_interval_seconds = env::var("UPDATE_INTERVAL_SECONDS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -91,9 +89,7 @@ impl AppConfig {
         let source_snapshot_url = env::var("SOURCE_SNAPSHOT_URL")
             .ok()
             .filter(|v| !v.is_empty());
-        let allow_local_source_snapshot = env::var("ALLOW_LOCAL_SOURCE_SNAPSHOT")
-            .unwrap_or_else(|_| "false".to_string())
-            .eq_ignore_ascii_case("true");
+        let allow_local_source_snapshot = env_bool_flag("ALLOW_LOCAL_SOURCE_SNAPSHOT");
         let temp_asset_dir =
             env::var("TEMP_ASSET_DIR").unwrap_or_else(|_| "worker/crawler/temp_assets".to_string());
         let ingest_write_chunk_size = match env_usize_optional("INGEST_WRITE_CHUNK_SIZE")? {
@@ -142,6 +138,12 @@ fn env_usize_optional(name: &str) -> Result<Option<usize>> {
     }
 
     Ok(Some(parsed))
+}
+
+fn env_bool_flag(name: &str) -> bool {
+    env::var(name)
+        .map(|value| value.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 pub fn default_ingest_write_chunk_size(database_type: &DatabaseType) -> usize {
@@ -303,5 +305,19 @@ mod tests {
         std::env::remove_var(key);
 
         Ok(())
+    }
+
+    #[test]
+    fn trims_whitespace_around_boolean_env_flags() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let key = format!("TEST_ALLOW_LOCAL_SOURCE_SNAPSHOT_{unique}");
+        std::env::set_var(&key, " true ");
+
+        assert!(env_bool_flag(&key));
+
+        std::env::remove_var(key);
     }
 }
