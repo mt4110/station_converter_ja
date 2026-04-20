@@ -405,7 +405,7 @@ export function StationList({
                 <a
                   href={googleMapsUrl(item)}
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                   style={{
                     display: "inline-flex",
                     alignItems: "center",

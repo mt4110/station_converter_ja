@@ -269,9 +269,7 @@ async fn dataset_status(
         .and_then(|snapshot| snapshot.get("source_url"))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let source_is_local = !(source_url.is_empty()
-        || source_url.starts_with("https://")
-        || source_url.starts_with("http://"));
+    let source_is_local = !(source_url.is_empty() || is_remote_http_url(source_url));
     let looks_like_full_dataset = active_station_count >= FULL_DATASET_MIN_STATION_COUNT;
 
     Ok(Json(json!({
@@ -284,6 +282,14 @@ async fn dataset_status(
         "active_version_snapshot_count": active_version_snapshot_count,
         "active_snapshot": active_snapshot,
     })))
+}
+
+fn is_remote_http_url(url: &str) -> bool {
+    let Some((scheme, _)) = url.split_once("://") else {
+        return false;
+    };
+
+    scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
 }
 
 async fn nearby_stations(
@@ -1176,6 +1182,41 @@ mod tests {
         let error = dataset_status(State(test_state(pool))).await.unwrap_err();
 
         assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn dataset_status_treats_uppercase_http_snapshot_urls_as_remote() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO source_snapshots (id, source_name, source_kind, source_version, source_url, source_sha256)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(1_i64)
+        .bind(N02_SOURCE_NAME)
+        .bind("geojson_zip_entry")
+        .bind("N02-25")
+        .bind("HTTPS://example.com/N02-25_GML.zip")
+        .bind("sha-1")
+        .execute(&pool)
+        .await
+        .unwrap();
+        insert_station(
+            &pool,
+            1,
+            StationSeed::new(
+                "stn_n02_shinjuku",
+                "新宿",
+                "中央線",
+                "東日本旅客鉄道",
+                35.6900,
+                139.7000,
+            ),
+        )
+        .await;
+
+        let response = dataset_status(State(test_state(pool))).await.unwrap().0;
+
+        assert_eq!(response["source_is_local"].as_bool(), Some(false));
     }
 
     fn test_state(pool: AnyPool) -> AppState {

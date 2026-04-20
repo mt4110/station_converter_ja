@@ -179,6 +179,12 @@ async fn run_ingest_n02_job(config: &AppConfig, chain_export_sqlite: bool) -> Re
 }
 
 async fn run_validate_ingest(config: &AppConfig, args: ValidateIngestArgs) -> Result<ExitCode> {
+    let _ingest_lock = acquire_job_lock(
+        &config.job_lock_dir,
+        N02_INGEST_LOCK_NAME,
+        &config.service_name,
+    )
+    .await?;
     let pool = connect_any_pool(&config.database_url).await?;
     let dialect = SqlDialect::from(&config.database_type);
     let report = validate_ingest(&pool, dialect, &args).await?;
