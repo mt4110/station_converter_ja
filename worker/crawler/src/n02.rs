@@ -12,7 +12,10 @@ use sha2::{Digest, Sha256};
 use sqlx::{Any, AnyPool, Row, Transaction};
 use station_shared::{
     config::{default_ingest_close_chunk_size, default_ingest_write_chunk_size, DatabaseType},
-    db::{decode_optional_string, decode_required_string, SqlDialect},
+    db::{
+        decode_optional_string, decode_required_string, prefix_scope_arg, prefix_scope_sql,
+        SqlDialect,
+    },
 };
 use zip::ZipArchive;
 
@@ -514,13 +517,14 @@ async fn fetch_identity_names(
     tx: &mut Transaction<'_, Any>,
     dialect: SqlDialect,
 ) -> Result<BTreeMap<String, String>> {
-    let station_uid_prefix_match = station_uid_prefix_match_sql(dialect, "station_uid");
+    let station_uid_prefix_match =
+        prefix_scope_sql(dialect, "station_uid", STATION_UID_PREFIX.len());
     let rows = sqlx::query(&dialect.statement(&format!(
         "SELECT station_uid, canonical_name
              FROM station_identities
              WHERE {station_uid_prefix_match}",
     )))
-    .bind(station_uid_prefix_match_arg(dialect, STATION_UID_PREFIX))
+    .bind(prefix_scope_arg(dialect, STATION_UID_PREFIX))
     .fetch_all(&mut **tx)
     .await?;
 
@@ -656,7 +660,8 @@ async fn fetch_latest_versions(
     tx: &mut Transaction<'_, Any>,
     dialect: SqlDialect,
 ) -> Result<BTreeMap<String, ExistingVersion>> {
-    let station_uid_prefix_match = station_uid_prefix_match_sql(dialect, "station_uid");
+    let station_uid_prefix_match =
+        prefix_scope_sql(dialect, "station_uid", STATION_UID_PREFIX.len());
     let rows = sqlx::query(&dialect.statement(&format!(
         "SELECT
                id,
@@ -675,7 +680,7 @@ async fn fetch_latest_versions(
              WHERE valid_to IS NULL
                AND {station_uid_prefix_match}",
     )))
-    .bind(station_uid_prefix_match_arg(dialect, STATION_UID_PREFIX))
+    .bind(prefix_scope_arg(dialect, STATION_UID_PREFIX))
     .fetch_all(&mut **tx)
     .await?;
 
@@ -700,30 +705,6 @@ async fn fetch_latest_versions(
     }
 
     Ok(versions)
-}
-
-fn station_uid_prefix_match_sql(dialect: SqlDialect, column: &str) -> String {
-    match dialect {
-        SqlDialect::Mysql => format!("{column} COLLATE utf8mb4_bin LIKE ? ESCAPE '\\\\'"),
-        SqlDialect::Postgres | SqlDialect::Sqlite => {
-            format!("substr({column}, 1, {}) = ?", STATION_UID_PREFIX.len())
-        }
-    }
-}
-
-fn station_uid_prefix_match_arg(dialect: SqlDialect, prefix: &str) -> String {
-    match dialect {
-        SqlDialect::Mysql => like_prefix_pattern(prefix),
-        SqlDialect::Postgres | SqlDialect::Sqlite => prefix.to_string(),
-    }
-}
-
-fn like_prefix_pattern(prefix: &str) -> String {
-    let escaped = prefix
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    format!("{escaped}%")
 }
 
 async fn close_station_versions(
@@ -1379,11 +1360,11 @@ mod tests {
     #[test]
     fn mysql_station_uid_prefix_match_uses_binary_like_with_escaped_prefix() {
         assert_eq!(
-            station_uid_prefix_match_sql(SqlDialect::Mysql, "station_uid"),
+            prefix_scope_sql(SqlDialect::Mysql, "station_uid", STATION_UID_PREFIX.len()),
             "station_uid COLLATE utf8mb4_bin LIKE ? ESCAPE '\\\\'"
         );
         assert_eq!(
-            station_uid_prefix_match_arg(SqlDialect::Mysql, STATION_UID_PREFIX),
+            prefix_scope_arg(SqlDialect::Mysql, STATION_UID_PREFIX),
             "stn\\_n02\\_%"
         );
     }

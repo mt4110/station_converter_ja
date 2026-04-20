@@ -106,6 +106,30 @@ pub fn distinct_text_count_sql(dialect: SqlDialect, column: &str) -> String {
     }
 }
 
+pub fn prefix_scope_sql(dialect: SqlDialect, column: &str, prefix_len: usize) -> String {
+    match dialect {
+        SqlDialect::Mysql => format!("{column} COLLATE utf8mb4_bin LIKE ? ESCAPE '\\\\'"),
+        SqlDialect::Postgres | SqlDialect::Sqlite => {
+            format!("substr({column}, 1, {prefix_len}) = ?")
+        }
+    }
+}
+
+pub fn prefix_scope_arg(dialect: SqlDialect, prefix: &str) -> String {
+    match dialect {
+        SqlDialect::Mysql => like_prefix_pattern(prefix),
+        SqlDialect::Postgres | SqlDialect::Sqlite => prefix.to_string(),
+    }
+}
+
+pub fn like_prefix_pattern(prefix: &str) -> String {
+    let escaped = prefix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("{escaped}%")
+}
+
 fn decode_bytes(row: &AnyRow, column: &str) -> std::result::Result<Vec<u8>, sqlx::Error> {
     row.try_get::<Vec<u8>, _>(column)
 }

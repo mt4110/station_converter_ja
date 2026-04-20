@@ -12,7 +12,7 @@ use station_shared::{
     config::AppConfig,
     db::{
         connect_any_pool, decode_optional_string, decode_required_string, distinct_text_count_sql,
-        integer_aggregate_sql, SqlDialect,
+        integer_aggregate_sql, prefix_scope_arg, prefix_scope_sql, SqlDialect,
     },
     model::{HealthResponse, ReadyResponse, StationSummary},
 };
@@ -198,7 +198,7 @@ async fn dataset_status(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let n02_where_clause = format!(
         "WHERE {}",
-        station_uid_prefix_scope_sql(state.dialect, "station_uid")
+        prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len())
     );
     let counts_sql = format!(
         "SELECT
@@ -220,10 +220,7 @@ async fn dataset_status(
         integer_aggregate_sql(state.dialect, "COUNT(DISTINCT snapshot_id)"),
     );
     let counts = sqlx::query(&state.dialect.statement(&counts_sql))
-        .bind(station_uid_prefix_scope_arg(
-            state.dialect,
-            N02_STATION_UID_PREFIX,
-        ))
+        .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
         .fetch_one(&state.pool)
         .await
         .map_err(internal_error)?;
@@ -254,10 +251,10 @@ async fn dataset_status(
     .map_err(internal_error)?
     .map(|row| {
         let id = row.try_get::<i64, _>("id")?;
-        let source_version = decode_optional_string(&row, "source_version")
-            .map_err(|err| sqlx::Error::Decode(err.into()))?;
-        let source_url = decode_required_string(&row, "source_url")
-            .map_err(|err| sqlx::Error::Decode(err.into()))?;
+        let source_version =
+            decode_optional_string(&row, "source_version").map_err(map_anyhow_to_sqlx_error)?;
+        let source_url =
+            decode_required_string(&row, "source_url").map_err(map_anyhow_to_sqlx_error)?;
 
         Ok::<Value, sqlx::Error>(json!({
             "id": id,
@@ -388,9 +385,9 @@ async fn line_catalog(
         .map(|row| {
             Ok(json!({
                 "line_name": decode_required_string(&row, "line_name")
-                    .map_err(|err| sqlx::Error::Decode(err.into()))?,
+                    .map_err(map_anyhow_to_sqlx_error)?,
                 "operator_name": decode_required_string(&row, "operator_name")
-                    .map_err(|err| sqlx::Error::Decode(err.into()))?,
+                    .map_err(map_anyhow_to_sqlx_error)?,
                 "station_count": row.try_get::<i64, _>("station_count")?,
             }))
         })
@@ -513,18 +510,23 @@ fn normalized_catalog_limit(limit: Option<u32>) -> i64 {
 fn row_to_station_summary(row: sqlx::any::AnyRow) -> Result<StationSummary, sqlx::Error> {
     Ok(StationSummary {
         station_uid: decode_required_string(&row, "station_uid")
-            .map_err(|err| sqlx::Error::Decode(err.into()))?,
+            .map_err(map_anyhow_to_sqlx_error)?,
         station_name: decode_required_string(&row, "station_name")
-            .map_err(|err| sqlx::Error::Decode(err.into()))?,
-        line_name: decode_required_string(&row, "line_name")
-            .map_err(|err| sqlx::Error::Decode(err.into()))?,
+            .map_err(map_anyhow_to_sqlx_error)?,
+        line_name: decode_required_string(&row, "line_name").map_err(map_anyhow_to_sqlx_error)?,
         operator_name: decode_required_string(&row, "operator_name")
-            .map_err(|err| sqlx::Error::Decode(err.into()))?,
+            .map_err(map_anyhow_to_sqlx_error)?,
         latitude: row.try_get("latitude")?,
         longitude: row.try_get("longitude")?,
-        status: decode_required_string(&row, "status")
-            .map_err(|err| sqlx::Error::Decode(err.into()))?,
+        status: decode_required_string(&row, "status").map_err(map_anyhow_to_sqlx_error)?,
     })
+}
+
+fn map_anyhow_to_sqlx_error(error: anyhow::Error) -> sqlx::Error {
+    match error.downcast::<sqlx::Error>() {
+        Ok(error) => error,
+        Err(error) => sqlx::Error::Decode(error.into()),
+    }
 }
 
 fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
@@ -543,30 +545,6 @@ fn nullable_integer_aggregate_sql(dialect: SqlDialect, expr: &str) -> String {
         SqlDialect::Mysql => format!("CAST({expr} AS SIGNED)"),
         SqlDialect::Postgres | SqlDialect::Sqlite => format!("CAST({expr} AS BIGINT)"),
     }
-}
-
-fn station_uid_prefix_scope_sql(dialect: SqlDialect, column: &str) -> String {
-    match dialect {
-        SqlDialect::Mysql => format!("{column} COLLATE utf8mb4_bin LIKE ? ESCAPE '\\\\'"),
-        SqlDialect::Postgres | SqlDialect::Sqlite => {
-            format!("substr({column}, 1, {}) = ?", N02_STATION_UID_PREFIX.len())
-        }
-    }
-}
-
-fn station_uid_prefix_scope_arg(dialect: SqlDialect, prefix: &str) -> String {
-    match dialect {
-        SqlDialect::Mysql => like_prefix_pattern(prefix),
-        SqlDialect::Postgres | SqlDialect::Sqlite => prefix.to_string(),
-    }
-}
-
-fn like_prefix_pattern(prefix: &str) -> String {
-    let escaped = prefix
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    format!("{escaped}%")
 }
 
 fn text_equals_sql(dialect: SqlDialect, column: &str) -> String {
@@ -606,13 +584,15 @@ mod tests {
     use sqlx::{any::AnyPoolOptions, AnyPool};
     use station_shared::{
         config::{AppConfig, DatabaseType},
-        db::{distinct_text_count_sql, ensure_sqlx_drivers, integer_aggregate_sql, SqlDialect},
+        db::{
+            distinct_text_count_sql, ensure_sqlx_drivers, integer_aggregate_sql,
+            like_prefix_pattern, prefix_scope_arg, prefix_scope_sql, SqlDialect,
+        },
     };
 
     use super::{
-        dataset_status, like_prefix_pattern, line_catalog, line_stations,
-        nullable_integer_aggregate_sql, operator_stations, search_stations,
-        station_uid_prefix_scope_arg, station_uid_prefix_scope_sql, text_equals_sql,
+        dataset_status, line_catalog, line_stations, map_anyhow_to_sqlx_error,
+        nullable_integer_aggregate_sql, operator_stations, search_stations, text_equals_sql,
         text_group_sql, text_like_sql, text_order_sql, AppState, LineStationsParams, SearchParams,
         N02_SOURCE_NAME, N02_STATION_UID_PREFIX,
     };
@@ -676,11 +656,15 @@ mod tests {
     #[test]
     fn mysql_station_uid_prefix_scope_uses_binary_like_with_escaped_prefix() {
         assert_eq!(
-            station_uid_prefix_scope_sql(SqlDialect::Mysql, "station_uid"),
+            prefix_scope_sql(
+                SqlDialect::Mysql,
+                "station_uid",
+                N02_STATION_UID_PREFIX.len()
+            ),
             "station_uid COLLATE utf8mb4_bin LIKE ? ESCAPE '\\\\'"
         );
         assert_eq!(
-            station_uid_prefix_scope_arg(SqlDialect::Mysql, N02_STATION_UID_PREFIX),
+            prefix_scope_arg(SqlDialect::Mysql, N02_STATION_UID_PREFIX),
             "stn\\_n02\\_%"
         );
     }
@@ -688,14 +672,27 @@ mod tests {
     #[test]
     fn sqlite_station_uid_prefix_scope_stays_substr_exact() {
         assert_eq!(
-            station_uid_prefix_scope_sql(SqlDialect::Sqlite, "station_uid"),
+            prefix_scope_sql(
+                SqlDialect::Sqlite,
+                "station_uid",
+                N02_STATION_UID_PREFIX.len()
+            ),
             "substr(station_uid, 1, 8) = ?"
         );
         assert_eq!(
-            station_uid_prefix_scope_arg(SqlDialect::Sqlite, N02_STATION_UID_PREFIX),
+            prefix_scope_arg(SqlDialect::Sqlite, N02_STATION_UID_PREFIX),
             N02_STATION_UID_PREFIX
         );
         assert_eq!(like_prefix_pattern("stn_n02_"), "stn\\_n02\\_%");
+    }
+
+    #[test]
+    fn map_anyhow_to_sqlx_error_preserves_sqlx_errors() {
+        let error = map_anyhow_to_sqlx_error(anyhow::Error::from(sqlx::Error::ColumnNotFound(
+            "station_uid".to_string(),
+        )));
+
+        assert!(matches!(error, sqlx::Error::ColumnNotFound(name) if name == "station_uid"));
     }
 
     #[test]
