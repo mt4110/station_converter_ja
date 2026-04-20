@@ -1,4 +1,7 @@
 mod export_sqlite;
+mod validate_ingest;
+
+use std::{process::ExitCode, str::FromStr};
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -9,13 +12,13 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use station_crawler::{run_n02_ingest_cycle, N02_INGEST_LOCK_NAME};
-use station_shared::config::{AppConfig, DatabaseType};
 use station_shared::{
+    config::{AppConfig, DatabaseType},
     db::{connect_any_pool, SqlDialect},
     job_lock::acquire_job_lock,
 };
-use std::str::FromStr;
 use tracing::info;
+use validate_ingest::{render_validation_report, validate_ingest, ValidateIngestArgs};
 
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/postgres");
 static MYSQL_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/mysql");
@@ -31,6 +34,7 @@ struct Cli {
 enum Commands {
     Migrate,
     ExportSqlite,
+    ValidateIngest(ValidateIngestArgs),
     Job {
         #[command(subcommand)]
         job: Jobs,
@@ -46,9 +50,19 @@ enum Jobs {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
+    match run().await {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     let config = AppConfig::from_env("station-ops")?;
 
@@ -72,12 +86,13 @@ async fn main() -> Result<()> {
                 "sqlite artifact export complete"
             );
         }
+        Commands::ValidateIngest(args) => return run_validate_ingest(&config, args).await,
         Commands::Job { job } => match job {
             Jobs::IngestN02 { export_sqlite } => run_ingest_n02_job(&config, export_sqlite).await?,
         },
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn migrate(config: &AppConfig) -> Result<()> {
@@ -138,6 +153,13 @@ async fn run_ingest_n02_job(config: &AppConfig, chain_export_sqlite: bool) -> Re
         unchanged = report.unchanged,
         removed = report.removed,
         skipped_existing_snapshot = report.skipped_existing_snapshot,
+        load_ms = report.load_ms,
+        save_zip_ms = report.save_zip_ms,
+        extract_ms = report.extract_ms,
+        parse_ms = report.parse_ms,
+        diff_ms = report.diff_ms,
+        persist_ms = report.persist_ms,
+        total_ms = report.total_ms,
         "ingest-n02 job complete"
     );
 
@@ -154,4 +176,21 @@ async fn run_ingest_n02_job(config: &AppConfig, chain_export_sqlite: bool) -> Re
     }
 
     Ok(())
+}
+
+async fn run_validate_ingest(config: &AppConfig, args: ValidateIngestArgs) -> Result<ExitCode> {
+    let _ingest_lock = acquire_job_lock(
+        &config.job_lock_dir,
+        N02_INGEST_LOCK_NAME,
+        &config.service_name,
+    )
+    .await?;
+    let pool = connect_any_pool(&config.database_url).await?;
+    let dialect = SqlDialect::from(&config.database_type);
+    let report = validate_ingest(&pool, dialect, &args).await?;
+    let output = render_validation_report(&report, args.json)?;
+
+    println!("{output}");
+
+    Ok(report.exit_code())
 }

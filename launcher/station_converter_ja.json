@@ -1,0 +1,345 @@
+{
+  "default_db": "postgres",
+  "default_language": "en",
+  "default_validate_strict": false,
+  "env_files": [
+    "worker/ops/.env",
+    "worker/api/.env",
+    "worker/crawler/.env"
+  ],
+  "logs_dir": "launcher/.state/logs",
+  "project_name": "station_converter_ja",
+  "project_name_ja": "station_converter_ja",
+  "quick_tips": [
+    "Fastest route: select Quick Start and press Enter.",
+    "Manual route: 1 Prepare Env + DB -> 2 Migrate -> 3 Ingest N02 -> 4 Validate Ingest -> 5 API -> 6 Sample Web.",
+    "DB Web UI is optional, but handy when you want to inspect PostgreSQL, MySQL, or the SQLite artifact from a browser."
+  ],
+  "quick_tips_ja": [
+    "最短は Quick Start を選んで Enter です。",
+    "手で進めるなら 1 Prepare Env + DB -> 2 Migrate -> 3 Ingest N02 -> 4 Validate Ingest -> 5 API -> 6 Sample Web の順です。",
+    "DB Web UI は任意ですが、PostgreSQL / MySQL / SQLite artifact をブラウザで覗きたいときに便利です。"
+  ],
+  "sections": [
+    {
+      "item_ids": [
+        "quickstart"
+      ],
+      "title": "Quick Start",
+      "title_ja": "クイックスタート"
+    },
+    {
+      "item_ids": [
+        "prepare",
+        "migrate",
+        "ingest",
+        "validate",
+        "frontend_install"
+      ],
+      "title": "Tasks",
+      "title_ja": "タスク"
+    },
+    {
+      "item_ids": [
+        "postgres_db",
+        "mysql_db",
+        "db_web",
+        "api",
+        "frontend",
+        "crawler_loop"
+      ],
+      "title": "Services",
+      "title_ja": "サービス"
+    },
+    {
+      "item_ids": [
+        "sample_web_link",
+        "api_ready_link",
+        "db_web_link"
+      ],
+      "title": "Links",
+      "title_ja": "リンク"
+    }
+  ],
+  "state_path": "launcher/.state/state.json",
+  "db_modes": {
+    "mysql": {
+      "label": "MySQL",
+      "placeholders": {
+        "db": "mysql",
+        "db_label": "MySQL",
+        "ingest_suffix": " --export-sqlite"
+      }
+    },
+    "postgres": {
+      "label": "PostgreSQL",
+      "placeholders": {
+        "db": "postgres",
+        "db_label": "PostgreSQL",
+        "ingest_suffix": " --export-sqlite"
+      }
+    },
+    "sqlite": {
+      "label": "SQLite",
+      "placeholders": {
+        "db": "sqlite",
+        "db_label": "SQLite",
+        "ingest_suffix": ""
+      }
+    }
+  },
+  "items": [
+    {
+      "description": "Prepare env, migrate, ingest, start DB Web, API, and sample frontend in one run.",
+      "description_ja": "env 準備、migrate、ingest、DB Web、API、Sample Web をまとめて一気に立ち上げます。",
+      "detail_lines": [
+        "Use this first when you want the whole local stack up without remembering every command."
+      ],
+      "detail_lines_ja": [
+        "コマンドを思い出さずに全体を最短で起動したいなら、まずこれです。"
+      ],
+      "id": "quickstart",
+      "kind": "workflow",
+      "label": "Quick Start",
+      "label_ja": "Quick Start",
+      "steps": [
+        "prepare",
+        "migrate",
+        "ingest",
+        "validate",
+        "db_web",
+        "api",
+        "frontend"
+      ]
+    },
+    {
+      "command": "./scripts/setup_nix_docker.sh {db}",
+      "description": "Copy .env files, create local folders, and boot the selected DB service when needed.",
+      "description_ja": ".env を揃え、ローカル作業用ディレクトリを作り、必要なら選択中 DB の Docker を起動します。",
+      "detail_lines": [
+        "Selected DB mode: {db_label}"
+      ],
+      "detail_lines_ja": [
+        "現在の DB モード: {db_label}"
+      ],
+      "id": "prepare",
+      "kind": "task",
+      "label": "Prepare Env + DB",
+      "label_ja": "Prepare Env + DB",
+      "quick_order": 1
+    },
+    {
+      "command": "cargo run -p station-ops -- migrate",
+      "description": "Apply storage migrations against the selected primary DB.",
+      "description_ja": "選択中の primary DB に migration を適用します。",
+      "id": "migrate",
+      "kind": "task",
+      "label": "Migrate",
+      "label_ja": "Migrate",
+      "quick_order": 2,
+      "runner": "dev_shell"
+    },
+    {
+      "command": "cargo run -p station-ops -- job ingest-n02{ingest_suffix}",
+      "description": "Run the official one-shot ingest. --export-sqlite is accepted for the future artifact path, but export itself is still scaffolded.",
+      "description_ja": "公式の one-shot ingest を実行します。--export-sqlite は将来の artifact 導線用に受け付けますが、export 自体はまだ scaffold 段階です。",
+      "detail_lines": [
+        "Selected DB mode: {db_label}"
+      ],
+      "detail_lines_ja": [
+        "現在の DB モード: {db_label}"
+      ],
+      "id": "ingest",
+      "kind": "task",
+      "label": "Ingest N02",
+      "label_ja": "Ingest N02",
+      "quick_order": 3,
+      "runner": "dev_shell"
+    },
+    {
+      "command": "cargo run -p station-ops -- validate-ingest{validate_flags}",
+      "description": "Run the acceptance check after ingest so you can tell whether the dataset is ready to trust.",
+      "description_ja": "ingest 後の acceptance check を実行して、データをそのまま使ってよい状態か判断します。",
+      "detail_lines": [
+        "This is the handoff point between ingest and API/frontend.",
+        "Quick Start validate mode: {validate_mode_label}",
+        "Use --strict manually when you want warnings to fail the run as well."
+      ],
+      "detail_lines_ja": [
+        "ingest から API / frontend へ渡してよいかを見る境目です。",
+        "Quick Start の validate mode: {validate_mode_label}",
+        "warning も failure 扱いにしたいときは、手で --strict を付けてください。"
+      ],
+      "id": "validate",
+      "kind": "task",
+      "label": "Validate Ingest",
+      "label_ja": "Validate Ingest",
+      "quick_order": 4,
+      "report_status_prefix": "validate-ingest:",
+      "runner": "dev_shell"
+    },
+    {
+      "command": "npm install",
+      "cwd": "frontend",
+      "description": "Install frontend dependencies once when node_modules is missing.",
+      "description_ja": "frontend の node_modules がないときだけ依存を入れます。",
+      "id": "frontend_install",
+      "kind": "task",
+      "label": "Frontend Install",
+      "label_ja": "Frontend Install",
+      "runner": "dev_shell",
+      "skip_if_exists_paths": [
+        "frontend/node_modules/next"
+      ]
+    },
+    {
+      "container_name": "station-postgres",
+      "description": "Local PostgreSQL primary write DB on port 3215.",
+      "description_ja": "port 3215 で動くローカル PostgreSQL primary write DB です。",
+      "detail_lines": [
+        "Port: 3215",
+        "Database: station_db",
+        "User: postgres",
+        "Password: postgres_password"
+      ],
+      "detail_lines_ja": [
+        "Port: 3215",
+        "Database: station_db",
+        "User: postgres",
+        "Password: postgres_password"
+      ],
+      "down": "docker compose stop postgres",
+      "id": "postgres_db",
+      "kind": "docker",
+      "label": "PostgreSQL",
+      "label_ja": "PostgreSQL",
+      "up": "docker compose up -d postgres"
+    },
+    {
+      "container_name": "station-mysql",
+      "description": "Local MySQL primary write DB on port 3214.",
+      "description_ja": "port 3214 で動くローカル MySQL primary write DB です。",
+      "detail_lines": [
+        "Port: 3214",
+        "Database: station_db",
+        "User: station_user",
+        "Password: station_password"
+      ],
+      "detail_lines_ja": [
+        "Port: 3214",
+        "Database: station_db",
+        "User: station_user",
+        "Password: station_password"
+      ],
+      "down": "docker compose stop mysql",
+      "id": "mysql_db",
+      "kind": "docker",
+      "label": "MySQL",
+      "label_ja": "MySQL",
+      "up": "docker compose up -d mysql"
+    },
+    {
+      "container_name": "station-adminer",
+      "description": "Adminer on port 3217. Works for PostgreSQL, MySQL, and SQLite artifact browsing.",
+      "description_ja": "port 3217 の Adminer です。PostgreSQL / MySQL / SQLite artifact をブラウザから見られます。",
+      "detail_lines": [
+        "PostgreSQL: system PostgreSQL / server postgres / db station_db / user postgres / pass postgres_password",
+        "MySQL: system MySQL / server mysql / db station_db / user station_user / pass station_password",
+        "SQLite: system SQLite 3 / server /var/lib/station-sqlite/stations.sqlite3"
+      ],
+      "detail_lines_ja": [
+        "PostgreSQL: system PostgreSQL / server postgres / db station_db / user postgres / pass postgres_password",
+        "MySQL: system MySQL / server mysql / db station_db / user station_user / pass station_password",
+        "SQLite: system SQLite 3 / server /var/lib/station-sqlite/stations.sqlite3"
+      ],
+      "down": "docker compose stop adminer",
+      "id": "db_web",
+      "kind": "docker",
+      "label": "DB Web UI",
+      "label_ja": "DB Web UI",
+      "up": "docker compose --profile dbweb up -d adminer",
+      "url": "http://127.0.0.1:3217"
+    },
+    {
+      "command": "cargo run -p station-api",
+      "description": "station-api on port 3212 with health and ready probes.",
+      "description_ja": "port 3212 の station-api です。health / ready を確認できます。",
+      "health_url": "http://127.0.0.1:3212/health",
+      "id": "api",
+      "kind": "service",
+      "label": "API",
+      "label_ja": "API",
+      "port": 3212,
+      "quick_order": 5,
+      "ready_timeout_seconds": 20,
+      "runner": "dev_shell",
+      "url": "http://127.0.0.1:3212/ready"
+    },
+    {
+      "command": "npm run dev",
+      "cwd": "frontend",
+      "description": "Next.js example frontend on port 3213.",
+      "description_ja": "port 3213 の Next.js example frontend です。",
+      "health_url": "http://127.0.0.1:3213",
+      "id": "frontend",
+      "kind": "service",
+      "label": "Sample Web",
+      "label_ja": "Sample Web",
+      "port": 3213,
+      "quick_order": 6,
+      "ready_timeout_seconds": 25,
+      "runner": "dev_shell",
+      "setup_if_missing_paths": [
+        "frontend/node_modules/next"
+      ],
+      "setup_task_id": "frontend_install",
+      "url": "http://127.0.0.1:3213"
+    },
+    {
+      "command": "cargo run -p station-crawler",
+      "description": "Development helper loop. Not the production resident path.",
+      "description_ja": "開発用の helper loop です。本番の resident path ではありません。",
+      "detail_lines": [
+        "This is a dev helper. The supported production entry point stays station-ops job ingest-n02."
+      ],
+      "detail_lines_ja": [
+        "これは dev helper です。正式な production entry point は station-ops job ingest-n02 のままです。"
+      ],
+      "id": "crawler_loop",
+      "kind": "service",
+      "label": "Crawler Loop",
+      "label_ja": "Crawler Loop",
+      "runner": "dev_shell"
+    },
+    {
+      "description": "Open the Next.js sample frontend in your browser.",
+      "description_ja": "Next.js sample frontend をブラウザで開きます。",
+      "id": "sample_web_link",
+      "kind": "link",
+      "label": "Open Sample Web",
+      "label_ja": "Open Sample Web",
+      "port": 3213,
+      "url": "http://127.0.0.1:3213"
+    },
+    {
+      "description": "Open the API readiness endpoint.",
+      "description_ja": "API の readiness endpoint を開きます。",
+      "id": "api_ready_link",
+      "kind": "link",
+      "label": "Open API Ready",
+      "label_ja": "Open API Ready",
+      "port": 3212,
+      "url": "http://127.0.0.1:3212/ready"
+    },
+    {
+      "description": "Open Adminer in your browser.",
+      "description_ja": "Adminer をブラウザで開きます。",
+      "id": "db_web_link",
+      "kind": "link",
+      "label": "Open DB Web",
+      "label_ja": "Open DB Web",
+      "port": 3217,
+      "url": "http://127.0.0.1:3217"
+    }
+  ]
+}

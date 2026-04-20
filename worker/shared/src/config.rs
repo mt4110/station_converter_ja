@@ -53,7 +53,10 @@ pub struct AppConfig {
     pub ready_require_cache: bool,
     pub update_interval_seconds: u64,
     pub source_snapshot_url: Option<String>,
+    pub allow_local_source_snapshot: bool,
     pub temp_asset_dir: String,
+    pub ingest_write_chunk_size: usize,
+    pub ingest_close_chunk_size: usize,
 }
 
 impl AppConfig {
@@ -78,19 +81,25 @@ impl AppConfig {
         let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:3212".to_string());
         let job_lock_dir = env::var("JOB_LOCK_DIR").unwrap_or_else(|_| "storage/locks".to_string());
         let redis_url = env::var("REDIS_URL").ok().filter(|v| !v.is_empty());
-        let ready_require_cache = env::var("READY_REQUIRE_CACHE")
-            .unwrap_or_else(|_| "false".to_string())
-            .eq_ignore_ascii_case("true");
+        let ready_require_cache = env_bool_flag("READY_REQUIRE_CACHE");
         let update_interval_seconds = env::var("UPDATE_INTERVAL_SECONDS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(86400);
-
         let source_snapshot_url = env::var("SOURCE_SNAPSHOT_URL")
             .ok()
             .filter(|v| !v.is_empty());
+        let allow_local_source_snapshot = env_bool_flag("ALLOW_LOCAL_SOURCE_SNAPSHOT");
         let temp_asset_dir =
             env::var("TEMP_ASSET_DIR").unwrap_or_else(|_| "worker/crawler/temp_assets".to_string());
+        let ingest_write_chunk_size = match env_usize_optional("INGEST_WRITE_CHUNK_SIZE")? {
+            Some(value) => value,
+            None => default_ingest_write_chunk_size(&database_type),
+        };
+        let ingest_close_chunk_size = match env_usize_optional("INGEST_CLOSE_CHUNK_SIZE")? {
+            Some(value) => value,
+            None => default_ingest_close_chunk_size(&database_type),
+        };
 
         Ok(Self {
             service_name: service_name.to_string(),
@@ -102,8 +111,53 @@ impl AppConfig {
             ready_require_cache,
             update_interval_seconds,
             source_snapshot_url,
+            allow_local_source_snapshot,
             temp_asset_dir,
+            ingest_write_chunk_size,
+            ingest_close_chunk_size,
         })
+    }
+}
+
+fn env_usize_optional(name: &str) -> Result<Option<usize>> {
+    let value = match env::var(name) {
+        Ok(value) => value.trim().to_string(),
+        Err(_) => return Ok(None),
+    };
+
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| anyhow!("{name} must be a positive integer"))?;
+
+    if parsed == 0 {
+        return Err(anyhow!("{name} must be greater than 0"));
+    }
+
+    Ok(Some(parsed))
+}
+
+fn env_bool_flag(name: &str) -> bool {
+    env::var(name)
+        .map(|value| value.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+pub fn default_ingest_write_chunk_size(database_type: &DatabaseType) -> usize {
+    match database_type {
+        DatabaseType::Postgres => 1000,
+        DatabaseType::Mysql => 200,
+        DatabaseType::Sqlite => 76,
+    }
+}
+
+pub fn default_ingest_close_chunk_size(database_type: &DatabaseType) -> usize {
+    match database_type {
+        DatabaseType::Postgres | DatabaseType::Mysql => 1000,
+        DatabaseType::Sqlite => 998,
     }
 }
 
@@ -131,7 +185,6 @@ fn load_service_env(service_name: &str) -> Result<()> {
 
 fn resolve_env_path(env_path: &Path) -> Option<PathBuf> {
     let roots = build_env_search_roots(env::current_dir().ok(), env::current_exe().ok());
-
     find_env_path(env_path, &roots)
 }
 
@@ -238,5 +291,33 @@ mod tests {
         fs::remove_dir_all(base)?;
 
         Ok(())
+    }
+
+    #[test]
+    fn treats_blank_optional_usize_env_as_unset() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let key = format!("TEST_INGEST_WRITE_CHUNK_SIZE_{unique}");
+        std::env::set_var(&key, "   ");
+
+        let parsed = env_usize_optional(&key)?;
+        assert_eq!(parsed, None);
+
+        std::env::remove_var(key);
+
+        Ok(())
+    }
+
+    #[test]
+    fn trims_whitespace_around_boolean_env_flags() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let key = format!("TEST_ALLOW_LOCAL_SOURCE_SNAPSHOT_{unique}");
+        std::env::set_var(&key, " true ");
+
+        assert!(env_bool_flag(&key));
+
+        std::env::remove_var(key);
     }
 }

@@ -52,6 +52,16 @@ services:
       timeout: 5s
       retries: 20
 
+  adminer:
+    image: adminer:4.17.1
+    container_name: station-adminer
+    restart: unless-stopped
+    profiles: ["dbweb"]
+    ports:
+      - "127.0.0.1:3217:8080"
+    volumes:
+      - ./storage/sqlite:/var/lib/station-sqlite:ro
+
 volumes:
   mysql_data:
   postgres_data:

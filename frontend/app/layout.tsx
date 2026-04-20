@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 
 export const metadata = {
-  title: "station_converter_ja examples",
-  description: "Next.js example frontend for station_converter_ja"
+  title: "駅データサンプル",
+  description: "全国駅データを使って検索導線を確認するサンプル"
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use station_crawler::{run_n02_ingest_cycle, N02_INGEST_LOCK_NAME};
+use station_crawler::{run_n02_ingest_cycle, IngestReport, N02_INGEST_LOCK_NAME};
 use station_shared::{
     config::AppConfig,
     db::{connect_any_pool, SqlDialect},
@@ -56,7 +56,7 @@ async fn run_once(
     config: &AppConfig,
     pool: &sqlx::AnyPool,
     dialect: SqlDialect,
-) -> Result<station_crawler::n02::IngestReport> {
+) -> Result<IngestReport> {
     let _lock = acquire_job_lock(
         &config.job_lock_dir,
         N02_INGEST_LOCK_NAME,

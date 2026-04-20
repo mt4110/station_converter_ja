@@ -48,6 +48,7 @@ PY
 
 export DATABASE_TYPE="$DB_TYPE"
 export SOURCE_SNAPSHOT_URL="file://$SNAPSHOT_ZIP"
+export ALLOW_LOCAL_SOURCE_SNAPSHOT=true
 export TEMP_ASSET_DIR="$RUN_DIR/temp_assets"
 export JOB_LOCK_DIR="$RUN_DIR/locks"
 export SQLITE_DATABASE_URL="sqlite://$RUN_DIR/stations.sqlite3"

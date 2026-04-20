@@ -1,7 +1,7 @@
 # station_converter_ja
 
-全国駅データを自動更新・差分管理する高性能な変換ツール＆APIです。  
-PostgreSQL / MySQL を primary write DB にし、SQLite を read-only artifact として配布できます。  
+全国駅データを自動更新・差分管理する高性能な変換ツール＆APIです。
+PostgreSQL / MySQL を primary write DB にし、SQLite を read-only artifact として配布できます。
 国土数値情報 N02 を取り込み、差分を version / change event として保持しつつ、API と SQLite artifact を提供します。
 
 English README: [README_EN.md](README_EN.md)
@@ -15,7 +15,7 @@ English README: [README_EN.md](README_EN.md)
 - artifact までまとめる補助導線: `station-ops job ingest-n02 --export-sqlite`
 - dev 補助モード: `station-crawler --loop`
 
-本番では `station-crawler` を常駐させません。  
+本番では `station-crawler` を常駐させません。
 本番 ingest の公式入口は **`station-ops job ingest-n02`** です。
 
 ## 最短セットアップ
@@ -79,6 +79,22 @@ cargo run -p station-api
 - PostgreSQL: `3215`
 - Redis: `3216`
 
+`postal_converter_ja` とポート帯をずらしてあるので、同時に立ち上げても衝突しにくいです。
+
+## クイックスタート TUI
+
+まず TUI から触るなら:
+
+```bash
+python3 launcher/quickstart_tui.py
+```
+
+`Quick Start` で env 準備、migrate、ingest、validate-ingest、DB Web、API、Sample Web をまとめて立ち上げられます。
+各項目は個別にも start / stop でき、選択中の項目の直近ログと直近の実行時刻をそのまま見られます。
+`Quick Start` 実行中は、右ペインで現在の step と経過時間を見られます。
+`v` で validate mode を `standard / strict` に切り替えられ、`x` で実行中の workflow をその場でキャンセルできます。
+`l` で英語 / 日本語を切り替えられ、右ペインに「最短で進める順番」の Tips も常に出ます。
+
 ### 6. Frontend 例を触る
 
 ```bash
@@ -86,6 +102,81 @@ cd frontend
 npm install
 npm run dev
 ```
+
+sample web は全国駅データを ingest してから使う前提です。
+
+DB をブラウザで見たいときは、TUI の `DB Web UI` を使うか、次を実行します。
+
+```bash
+docker compose --profile dbweb up -d adminer
+```
+
+## validate-ingest
+
+ingest 後の acceptance check は次で回せます。
+
+```bash
+cargo run -p station-ops -- validate-ingest
+```
+
+JSON が欲しいときは `--json`、warning も failure 扱いにしたいときは `--strict` を付けてください。
+
+## Ingest Baseline
+
+2026-04-19 時点のローカル PostgreSQL 実測:
+
+- source: MLIT `N02-24`
+- parsed_features: `10235`
+- parsed_stations: `10155`
+- `validate-ingest`: `ok`
+- fresh PostgreSQL initial ingest:
+  - `load_ms=582`
+  - `save_zip_ms=1`
+  - `extract_ms=21`
+  - `parse_ms=308`
+  - `diff_ms=28`
+  - `persist_ms=630`
+  - `total_ms=2039`
+- same snapshot re-ingest with skip:
+  - `persist_ms=4`
+  - `total_ms=952`
+
+同日の比較で、bulk persistence 導入前の fresh PostgreSQL initial ingest は `persist_ms=10091`, `total_ms=12044` でした。
+つまり、支配的だった persist が大きく落ち、最適化の主目的は達成できています。
+
+同じ local ZIP を使った chunk size sweep:
+
+| write chunk | persist_ms | total_ms |
+| --- | ---: | ---: |
+| `200` | `658` | `1498` |
+| `500` | `626` | `1460` |
+| `1000` | `596` | `1422` |
+
+この比較では `1000` が最良でした。
+ただし SQLite は build によって bind parameter 上限が `999` のことがあるため、実運用の default は SQLite だけ `write=76` / `close=998` に抑え、PostgreSQL は `1000` を維持しています。
+
+2026-04-19 時点のローカル MySQL 実測:
+
+| write chunk | persist_ms | total_ms |
+| --- | ---: | ---: |
+| `200` | `574` | `1384` |
+| `500` | `627` | `1455` |
+| `1000` | `632` | `1465` |
+
+この比較では MySQL は `200` が最良でした。
+そのため env 未指定時の default は **PostgreSQL = `write=1000` / `close=1000`、MySQL = `write=200` / `close=1000`、SQLite = `write=76` / `close=998`** にしています。
+
+MySQL では default collation が text distinct を 1 件つぶすことがあったため、`validate-ingest` の distinct line / operator count は bytewise semantics に寄せて cross-DB で揃えています。
+同じ理由で API の `stations/search` / `lines/{line_name}/stations` / `operators/{operator_name}/stations` も MySQL では binary collation を使い、`の` と `ノ` のような別名が混ざらないようにしています。
+いずれの数値も local machine の reference 値であり、別マシンや別ストレージ条件での最適値を保証するものではありません。
+
+## Example frontend
+
+- `/examples/station-search` - 駅名検索
+- `/examples/address-search` - 住所 / 市区町村から近い駅候補
+- `/examples/line-search` - 路線から駅一覧
+- `/examples/operator-search` - 事業者から駅一覧
+- `/examples/nearby-search` - 緯度経度から近くの駅
 
 ## 本番運用の導線
 
@@ -170,7 +261,9 @@ GitHub Release までまとめて公開する:
 現状の crawler は、国土数値情報 N02 の公式 ZIP に同梱される UTF-8 `Station.geojson` を読み込み、
 `source_snapshots` / `station_versions` / `station_change_events` まで反映します。
 
-つまり、この repo はもう空箱ではありません。  
+`stations/search` / `lines/{line_name}/stations` / `operators/{operator_name}/stations` は cross-DB semantics を揃えており、MySQL でも `江の島線` と `江ノ島線`、`の` と `ノ` のような別値が混ざらないようにしています。
+
+つまり、この repo はもう空箱ではありません。
 N02 one-shot ingest、`created / updated / removed` の初期差分反映、SQLite artifact export、
 API、運用導線まで揃った v1 の実働基盤です。ここから overlay、OpenAPI、cloud deploy を積み増していく前提です。
 
@@ -192,5 +285,5 @@ API、運用導線まで揃った v1 の実働基盤です。ここから overla
 
 ## License
 
-この repo は **MIT OR Apache-2.0** の dual license です。  
+この repo は **MIT OR Apache-2.0** の dual license です。
 利用者は [`LICENSE-MIT`](LICENSE-MIT) または [`LICENSE-APACHE`](LICENSE-APACHE) を選べます。
