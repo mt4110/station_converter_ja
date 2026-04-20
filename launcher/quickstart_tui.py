@@ -801,7 +801,7 @@ class QuickstartApp:
             self._reconcile_processes()
             if self._workflow_cancel_requested(workflow_item_id):
                 item = self.items.get(item_id)
-                if item and item["kind"] == "task":
+                if item and item["kind"] in {"task", "docker"}:
                     self._stop_managed_item(item)
                 return False
             state = self._item_state(item_id)
@@ -1255,6 +1255,14 @@ class QuickstartApp:
                 return "BOOT", detail if port else self.t("pid", pid=pid)
             if externally_running:
                 return "EXT", detail
+            exit_code = state.get("last_exit_code")
+            if exit_code is not None:
+                note = state.get("status_note")
+                if note in {"canceled", "stopped"}:
+                    return "STOP", self._display_status_note(note)
+                if exit_code == 0:
+                    return "OK", self._display_status_note(note)
+                return "ERR", self._display_status_note(note) if note else f"exit {exit_code}"
             return "--", self.t("stopped")
 
         if kind == "docker":
