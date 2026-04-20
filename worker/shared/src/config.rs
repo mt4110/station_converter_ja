@@ -125,9 +125,13 @@ impl AppConfig {
 
 fn env_usize_optional(name: &str) -> Result<Option<usize>> {
     let value = match env::var(name) {
-        Ok(value) => value,
+        Ok(value) => value.trim().to_string(),
         Err(_) => return Ok(None),
     };
+
+    if value.is_empty() {
+        return Ok(None);
+    }
 
     let parsed = value
         .parse::<usize>()
@@ -283,6 +287,20 @@ mod tests {
         );
 
         fs::remove_dir_all(base)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn treats_blank_optional_usize_env_as_unset() -> Result<()> {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let key = format!("TEST_INGEST_WRITE_CHUNK_SIZE_{unique}");
+        std::env::set_var(&key, "   ");
+
+        let parsed = env_usize_optional(&key)?;
+        assert_eq!(parsed, None);
+
+        std::env::remove_var(key);
 
         Ok(())
     }

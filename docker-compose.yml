@@ -58,7 +58,7 @@ services:
     restart: unless-stopped
     profiles: ["dbweb"]
     ports:
-      - "3217:8080"
+      - "127.0.0.1:3217:8080"
     volumes:
       - ./storage/sqlite:/var/lib/station-sqlite:ro
 
