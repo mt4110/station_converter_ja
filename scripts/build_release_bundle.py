@@ -509,7 +509,14 @@ def render_consumer_verification_commands(*, release_version: str, repo_hint: st
           -p README_SQLITE.md \\
           -p SBOM.spdx.json
         cd "tmp/release-${{TAG}}"
-        shasum -a 256 -c checksums.txt
+        if command -v sha256sum >/dev/null 2>&1; then
+          sha256sum -c checksums.txt
+        elif command -v shasum >/dev/null 2>&1; then
+          shasum -a 256 -c checksums.txt
+        else
+          echo "Neither sha256sum nor shasum is available for checksum verification." >&2
+          exit 1
+        fi
         gh attestation verify stations.sqlite3 -R "$REPO"
         gh attestation verify stations.sqlite3 -R "$REPO" \\
           --predicate-type https://spdx.dev/Document/v2.3

@@ -30,6 +30,7 @@ REQUIRED_MANIFEST_KEYS = [
 
 REQUIRED_CONSUMER_VERIFICATION_TEXT = [
     "gh release download",
+    "sha256sum -c checksums.txt",
     "shasum -a 256 -c checksums.txt",
     "gh attestation verify stations.sqlite3",
     "--predicate-type https://spdx.dev/Document/v2.3",
