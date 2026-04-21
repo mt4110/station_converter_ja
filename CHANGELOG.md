@@ -22,6 +22,7 @@
 - release packaging が source snapshot、row counts、git commit、tool version を記録するようになった
 - release publish script が bundle 一式を GitHub Release asset として upload するようになった
 - OpenAPI の dataset history / change detail description と `API_SPEC.md` の読み方を同期した
+- README / release docs / generated SQLite artifact notes に consumer-side verification flow を追加した
 
 ## v0.1.0
 

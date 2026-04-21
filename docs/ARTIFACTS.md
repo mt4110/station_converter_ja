@@ -38,7 +38,31 @@ artifacts/sqlite/station_converter_ja-<release-version>-sqlite-<timestamp>/
 
 ## Verification
 
+GitHub Release から asset を取得します。
+
+```bash
+REPO=mt4110/station_converter_ja
+TAG=v0.1.4
+mkdir -p "tmp/release-${TAG}"
+gh release download "$TAG" -R "$REPO" -D "tmp/release-${TAG}" --clobber \
+  -p stations.sqlite3 \
+  -p manifest.json \
+  -p SOURCE_METADATA.json \
+  -p checksums.txt \
+  -p CHANGELOG.md \
+  -p RELEASE_NOTES.md \
+  -p README_SQLITE.md \
+  -p SBOM.spdx.json
+cd "tmp/release-${TAG}"
+```
+
 SHA-256:
+
+```bash
+shasum -a 256 -c checksums.txt
+```
+
+Linux で `sha256sum` がある場合:
 
 ```bash
 sha256sum -c checksums.txt
@@ -47,16 +71,21 @@ sha256sum -c checksums.txt
 artifact attestation:
 
 ```bash
-gh attestation verify stations.sqlite3 -R mt4110/station_converter_ja
+gh attestation verify stations.sqlite3 -R "$REPO"
 ```
 
 SBOM attestation:
 
 ```bash
 gh attestation verify stations.sqlite3 \
-  -R mt4110/station_converter_ja \
+  -R "$REPO" \
   --predicate-type https://spdx.dev/Document/v2.3
 ```
+
+`manifest.json` は source snapshot、row counts、git commit、tool version を持ちます。
+`SOURCE_METADATA.json` は export に入った source snapshot history を持ちます。
+この bundle は latest available MLIT N02 snapshot を配るためのもので、
+real-time railway data ではありません。
 
 ## Release workflow
 
