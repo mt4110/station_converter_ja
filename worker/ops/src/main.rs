@@ -23,6 +23,12 @@ use validate_ingest::{render_validation_report, validate_ingest, ValidateIngestA
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/postgres");
 static MYSQL_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/mysql");
 static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/sqlite");
+const VERIFY_RESET_TABLES: [&str; 4] = [
+    "station_change_events",
+    "station_versions",
+    "station_identities",
+    "source_snapshots",
+];
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -33,6 +39,10 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Migrate,
+    ResetVerifyDb {
+        #[arg(long)]
+        yes: bool,
+    },
     ExportSqlite,
     ValidateIngest(ValidateIngestArgs),
     Job {
@@ -68,6 +78,7 @@ async fn run() -> Result<ExitCode> {
 
     match cli.command {
         Commands::Migrate => migrate(&config).await?,
+        Commands::ResetVerifyDb { yes } => reset_verify_db(&config, yes).await?,
         Commands::ExportSqlite => {
             // Export shares the ingest lock so SQLite snapshots never race a live ingest.
             let _lock = acquire_job_lock(
@@ -117,6 +128,65 @@ async fn migrate(config: &AppConfig) -> Result<()> {
     }
 
     info!("migrations complete for {}", config.database_type);
+    Ok(())
+}
+
+async fn reset_verify_db(config: &AppConfig, yes: bool) -> Result<()> {
+    if !yes {
+        bail!("reset-verify-db is destructive; re-run with --yes");
+    }
+
+    match config.database_type {
+        DatabaseType::Postgres => {
+            let pool = PgPoolOptions::new().connect(&config.database_url).await?;
+            sqlx::query(
+                "TRUNCATE TABLE
+                   station_change_events,
+                   station_versions,
+                   station_identities,
+                   source_snapshots
+                 RESTART IDENTITY CASCADE",
+            )
+            .execute(&pool)
+            .await?;
+        }
+        DatabaseType::Mysql => {
+            let pool = MySqlPoolOptions::new()
+                .connect(&config.database_url)
+                .await?;
+            let mut conn = pool.acquire().await?;
+
+            // Use TRUNCATE so verification reruns start from deterministic AUTO_INCREMENT values.
+            sqlx::query("SET FOREIGN_KEY_CHECKS = 0")
+                .execute(&mut *conn)
+                .await?;
+
+            let reset_result = async {
+                for table in VERIFY_RESET_TABLES {
+                    let statement = format!("TRUNCATE TABLE {table}");
+                    sqlx::query(&statement).execute(&mut *conn).await?;
+                }
+                Ok::<(), sqlx::Error>(())
+            }
+            .await;
+
+            let restore_result = sqlx::query("SET FOREIGN_KEY_CHECKS = 1")
+                .execute(&mut *conn)
+                .await;
+
+            if let Err(error) = reset_result {
+                restore_result?;
+                return Err(error.into());
+            }
+
+            restore_result?;
+        }
+        DatabaseType::Sqlite => {
+            bail!("reset-verify-db is only supported for postgres or mysql");
+        }
+    }
+
+    info!("verification database reset for {}", config.database_type);
     Ok(())
 }
 

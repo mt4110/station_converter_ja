@@ -67,6 +67,7 @@ echo "verifying migrate -> ingest -> export on ${DB_TYPE}"
 (
   cd "$ROOT_DIR"
   cargo run -p station-ops -- migrate
+  cargo run -p station-ops -- reset-verify-db --yes
   cargo run -p station-ops -- job ingest-n02 --export-sqlite
 )
 
@@ -80,26 +81,32 @@ snapshot_sha = sys.argv[2]
 conn = sqlite3.connect(db_path)
 try:
     snapshot_row = conn.execute(
-        "SELECT id FROM source_snapshots WHERE source_sha256 = ?",
+        """
+        SELECT
+            ss.id,
+            COUNT(DISTINCT sv.id) AS station_versions,
+            COUNT(DISTINCT sce.id) AS station_change_events
+        FROM source_snapshots AS ss
+        LEFT JOIN station_versions AS sv
+          ON sv.snapshot_id = ss.id
+        LEFT JOIN station_change_events AS sce
+          ON sce.snapshot_id = ss.id
+        WHERE ss.source_sha256 = ?
+        GROUP BY ss.id
+        ORDER BY station_versions DESC, station_change_events DESC, ss.id DESC
+        LIMIT 1
+        """,
         (snapshot_sha,),
     ).fetchone()
     if snapshot_row is None:
         raise SystemExit(f"fixture snapshot not exported: {snapshot_sha}")
 
-    snapshot_id = snapshot_row[0]
-    snapshot_versions = conn.execute(
-        "SELECT COUNT(*) FROM station_versions WHERE snapshot_id = ?",
-        (snapshot_id,),
-    ).fetchone()[0]
+    snapshot_id, snapshot_versions, snapshot_change_events = snapshot_row
     if snapshot_versions != 2:
         raise SystemExit(
             f"station_versions for fixture snapshot mismatch: expected 2, got {snapshot_versions}"
         )
 
-    snapshot_change_events = conn.execute(
-        "SELECT COUNT(*) FROM station_change_events WHERE snapshot_id = ?",
-        (snapshot_id,),
-    ).fetchone()[0]
     if snapshot_change_events < 2:
         raise SystemExit(
             "station_change_events for fixture snapshot should be at least 2, "

@@ -124,6 +124,9 @@ Static verification plus database-backed flow checks:
 cd frontend && npm ci && npm run build
 ```
 
+`./scripts/verify_repo.sh` now also runs the frontend station SDK freshness check,
+so OpenAPI changes cannot drift away from regenerated client artifacts.
+
 Build a distributable SQLite bundle:
 
 ```bash
@@ -160,6 +163,9 @@ Outputs are written to `artifacts/sqlite/`.
 - [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
   - SQLite release bundle contents
   - checksum / attestation verification
+- [docs/OPENAPI.md](docs/OPENAPI.md)
+  - first-pass OpenAPI design
+  - `/openapi.json` and `/docs` plan
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
   - runtime responsibility split
   - lock policy
@@ -178,6 +184,7 @@ Outputs are written to `artifacts/sqlite/`.
 - ship or verify the SQLite artifact: [docs/RELEASE.md](docs/RELEASE.md), [docs/ROADMAP.md](docs/ROADMAP.md)
 - inspect the release bundle contents: [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
 - run the API locally: [README.md](README.md), [API_SPEC.md](API_SPEC.md), [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- review the next API contract plan: [docs/OPENAPI.md](docs/OPENAPI.md), [API_SPEC.md](API_SPEC.md)
 - self-host in production: [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/DEPLOY.md](docs/DEPLOY.md)
 - inspect the schema and example SQL: [docs/DATABASE.md](docs/DATABASE.md)
 - confirm source and licensing policy: [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md), [docs/ROADMAP.md](docs/ROADMAP.md)

@@ -2,13 +2,13 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import {
-  getDatasetStatus,
   searchNearbyStations,
-  type DatasetStatus,
   type NearbyStationsResponse
 } from "../../../src/lib/station-sdk";
+import { useDatasetOverview } from "../../../src/lib/use-dataset-overview";
 import {
   DatasetBanner,
+  DatasetHistoryPanels,
   ExamplePage,
   ResultSummary,
   SearchBand,
@@ -20,23 +20,10 @@ export default function NearbySearchPage() {
   const [lat, setLat] = useState("35.6895");
   const [lng, setLng] = useState("139.6917");
   const [result, setResult] = useState<NearbyStationsResponse | null>(null);
-  const [dataset, setDataset] = useState<DatasetStatus | null>(null);
   const [loading, setLoading] = useState(false);
-  const [datasetLoading, setDatasetLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const datasetReady = dataset?.can_query_stations ?? false;
-
-  async function loadDataset() {
-    setDatasetLoading(true);
-
-    try {
-      setDataset(await getDatasetStatus());
-    } catch {
-      setDataset(null);
-    } finally {
-      setDatasetLoading(false);
-    }
-  }
+  const { dataset, datasetLoading, datasetReady, snapshots, changes, historyLoading, historyError } =
+    useDatasetOverview();
 
   async function runSearch(nextLat: string, nextLng: string) {
     setLoading(true);
@@ -61,10 +48,6 @@ export default function NearbySearchPage() {
   }
 
   useEffect(() => {
-    void loadDataset();
-  }, []);
-
-  useEffect(() => {
     if (!datasetReady) {
       setResult(null);
       return;
@@ -83,6 +66,13 @@ export default function NearbySearchPage() {
       }}
     >
       <DatasetBanner dataset={dataset} loading={datasetLoading} />
+      <DatasetHistoryPanels
+        dataset={dataset}
+        snapshots={snapshots}
+        changes={changes}
+        loading={historyLoading}
+        error={historyError}
+      />
       <SearchBand title="座標から探す" detail="緯度経度から近い駅候補をまとめて返します。">
         <form
           onSubmit={onSubmit}

@@ -2,13 +2,13 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import {
-  getDatasetStatus,
   listOperatorStations,
-  type DatasetStatus,
   type OperatorStationsResponse
 } from "../../../src/lib/station-sdk";
+import { useDatasetOverview } from "../../../src/lib/use-dataset-overview";
 import {
   DatasetBanner,
+  DatasetHistoryPanels,
   ExamplePage,
   ResultSummary,
   SearchBand,
@@ -19,23 +19,10 @@ import {
 export default function OperatorSearchPage() {
   const [operatorName, setOperatorName] = useState("東日本旅客鉄道");
   const [result, setResult] = useState<OperatorStationsResponse | null>(null);
-  const [dataset, setDataset] = useState<DatasetStatus | null>(null);
   const [loading, setLoading] = useState(false);
-  const [datasetLoading, setDatasetLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const datasetReady = dataset?.can_query_stations ?? false;
-
-  async function loadDataset() {
-    setDatasetLoading(true);
-
-    try {
-      setDataset(await getDatasetStatus());
-    } catch {
-      setDataset(null);
-    } finally {
-      setDatasetLoading(false);
-    }
-  }
+  const { dataset, datasetLoading, datasetReady, snapshots, changes, historyLoading, historyError } =
+    useDatasetOverview();
 
   async function runLookup(nextOperatorName: string) {
     setLoading(true);
@@ -60,10 +47,6 @@ export default function OperatorSearchPage() {
   }
 
   useEffect(() => {
-    void loadDataset();
-  }, []);
-
-  useEffect(() => {
     if (!datasetReady) {
       setResult(null);
       return;
@@ -82,6 +65,13 @@ export default function OperatorSearchPage() {
       }}
     >
       <DatasetBanner dataset={dataset} loading={datasetLoading} />
+      <DatasetHistoryPanels
+        dataset={dataset}
+        snapshots={snapshots}
+        changes={changes}
+        loading={historyLoading}
+        error={historyError}
+      />
       <SearchBand title="事業者から探す" detail="事業者ごとの駅を、路線順にまとめて見ます。">
         <form onSubmit={onSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input

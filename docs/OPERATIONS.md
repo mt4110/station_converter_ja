@@ -165,6 +165,9 @@ GitHub Release まで載せる場合:
 cd frontend && npm ci && npm run build
 ```
 
+`verify_repo.sh` には OpenAPI 由来の frontend station SDK / 型定義の
+freshness check も含まれます。
+
 ### Update procedure
 
 1. 新しいコードを配置する

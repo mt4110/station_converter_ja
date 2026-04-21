@@ -2,19 +2,21 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
-  getDatasetStatus,
   listLineStations,
-  searchAddressCandidates,
   searchNearbyStations,
-  type AddressCandidate,
-  type AddressSearchResponse,
-  type DatasetStatus,
   type LineStationsResponse,
   type NearbyStationsResponse,
   type StationSummary
 } from "../../../src/lib/station-sdk";
 import {
+  searchAddressCandidates,
+  type AddressCandidate,
+  type AddressSearchResponse
+} from "../../../src/lib/address-search";
+import { useDatasetOverview } from "../../../src/lib/use-dataset-overview";
+import {
   DatasetBanner,
+  DatasetHistoryPanels,
   ExamplePage,
   ResultSummary,
   SearchBand,
@@ -71,14 +73,12 @@ export default function AddressSearchPage() {
   const [nearbyResult, setNearbyResult] = useState<NearbyStationsResponse | null>(null);
   const [lineResult, setLineResult] = useState<LineStationsResponse | null>(null);
   const [selectedStationUid, setSelectedStationUid] = useState<string | null>(null);
-  const [dataset, setDataset] = useState<DatasetStatus | null>(null);
-  const [datasetLoading, setDatasetLoading] = useState(true);
   const [addressLoading, setAddressLoading] = useState(false);
   const [nearbyLoading, setNearbyLoading] = useState(false);
   const [lineLoading, setLineLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const datasetReady = dataset?.can_query_stations ?? false;
+  const { dataset, datasetLoading, datasetReady, snapshots, changes, historyLoading, historyError } =
+    useDatasetOverview();
   const selectedAddress = addressResult?.items[selectedAddressIndex] ?? null;
   const selectedStation =
     nearbyResult?.items.find((item) => item.station_uid === selectedStationUid) ?? nearbyResult?.items[0] ?? null;
@@ -93,18 +93,6 @@ export default function AddressSearchPage() {
       distanceMeters: distanceBetweenMeters(selectedAddress, station)
     }));
   }, [nearbyResult, selectedAddress]);
-
-  async function loadDataset() {
-    setDatasetLoading(true);
-
-    try {
-      setDataset(await getDatasetStatus());
-    } catch {
-      setDataset(null);
-    } finally {
-      setDatasetLoading(false);
-    }
-  }
 
   async function loadLineContext(station: StationSummary | null) {
     if (!station) {
@@ -203,10 +191,6 @@ export default function AddressSearchPage() {
   }
 
   useEffect(() => {
-    void loadDataset();
-  }, []);
-
-  useEffect(() => {
     if (!datasetReady) {
       setAddressResult(null);
       setNearbyResult(null);
@@ -229,6 +213,13 @@ export default function AddressSearchPage() {
       }}
     >
       <DatasetBanner dataset={dataset} loading={datasetLoading} />
+      <DatasetHistoryPanels
+        dataset={dataset}
+        snapshots={snapshots}
+        changes={changes}
+        loading={historyLoading}
+        error={historyError}
+      />
       <SearchBand title="住所・市区町村から探す" detail="位置を解いて、近い駅候補と沿線の確認まで続けます。">
         <form onSubmit={onSubmit} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8 }}>
           <input

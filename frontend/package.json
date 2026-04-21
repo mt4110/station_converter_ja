@@ -5,10 +5,13 @@
   "scripts": {
     "dev": "next dev -p 3213",
     "build": "next build",
-    "start": "next start -p 3213"
+    "start": "next start -p 3213",
+    "generate:station-sdk": "node ./scripts/generate-station-sdk.mjs",
+    "verify:station-sdk": "node ./scripts/generate-station-sdk.mjs --check"
   },
   "dependencies": {
     "next": "^15.0.0",
+    "openapi-fetch": "^0.17.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -16,6 +19,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "openapi-typescript": "^7.13.0",
     "typescript": "^5.0.0"
   }
 }

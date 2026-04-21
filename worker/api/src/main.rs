@@ -1,12 +1,14 @@
+mod error;
+mod openapi;
+mod schema;
+
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
     Json, Router,
 };
-use serde::Deserialize;
-use serde_json::{json, Value};
 use sqlx::{AnyPool, Row};
 use station_shared::{
     config::AppConfig,
@@ -14,14 +16,28 @@ use station_shared::{
         connect_any_pool, decode_optional_string, decode_required_string, distinct_text_count_sql,
         integer_aggregate_sql, prefix_scope_arg, prefix_scope_sql, SqlDialect,
     },
-    model::{HealthResponse, ReadyResponse, StationSummary},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{error, info};
 
+use crate::{
+    error::{internal_error, ApiError, ApiQuery, ApiResult},
+    schema::{
+        ApiErrorResponseDto, DatasetChangeDetailDto, DatasetChangeEventDto, DatasetChangeKindDto,
+        DatasetChangesParams, DatasetChangesResponseDto, DatasetSnapshotChangeCountsDto,
+        DatasetSnapshotDto, DatasetSnapshotRefDto, DatasetSnapshotsParams,
+        DatasetSnapshotsResponseDto, DatasetStatusResponseDto, HealthResponseDto,
+        LineCatalogItemDto, LineCatalogParams, LineCatalogResponseDto, LineStationsParams,
+        LineStationsResponseDto, NearbyParams, NearbyStationsQueryDto, NearbyStationsResponseDto,
+        OperatorStationsResponseDto, ReadinessResponseDto, SearchParams, StationSearchResponseDto,
+        StationSummaryDto,
+    },
+};
+
 const FULL_DATASET_MIN_STATION_COUNT: i64 = 10_000;
 const N02_SOURCE_NAME: &str = "ksj_n02_station";
 const N02_STATION_UID_PREFIX: &str = "stn_n02_";
+const DUMP_OPENAPI_JSON_FLAG: &str = "--dump-openapi-json";
 
 #[derive(Clone)]
 struct AppState {
@@ -30,26 +46,37 @@ struct AppState {
     pool: AnyPool,
 }
 
-#[derive(Debug, Deserialize)]
-struct SearchParams {
-    q: Option<String>,
-    limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-struct NearbyParams {
-    lat: f64,
-    lng: f64,
-    limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LineStationsParams {
-    operator_name: Option<String>,
+fn app(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/ready", get(ready))
+        .route("/v1/dataset/status", get(dataset_status))
+        .route("/v1/dataset/snapshots", get(dataset_snapshots))
+        .route("/v1/dataset/changes", get(dataset_changes))
+        .route("/v1/stations/search", get(search_stations))
+        .route("/v1/stations/nearby", get(nearby_stations))
+        .route("/v1/lines/catalog", get(line_catalog))
+        .route("/v1/lines/{line_name}/stations", get(line_stations))
+        .route(
+            "/v1/operators/{operator_name}/stations",
+            get(operator_stations),
+        )
+        .merge(openapi::docs_router())
+        .layer(TraceLayer::new_for_http())
+        .layer(CorsLayer::permissive())
+        .with_state(state)
 }
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().any(|arg| arg == DUMP_OPENAPI_JSON_FLAG) {
+        let openapi_json =
+            serde_json::to_string_pretty(&<openapi::ApiDoc as utoipa::OpenApi>::openapi())
+                .expect("failed to serialize openapi");
+        println!("{openapi_json}");
+        return;
+    }
+
     tracing_subscriber::fmt().with_env_filter("info").init();
 
     let config = AppConfig::from_env("station-api").expect("failed to load config");
@@ -61,22 +88,7 @@ async fn main() {
         dialect: SqlDialect::from(&config.database_type),
         pool,
     };
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/ready", get(ready))
-        .route("/v1/dataset/status", get(dataset_status))
-        .route("/v1/stations/search", get(search_stations))
-        .route("/v1/stations/nearby", get(nearby_stations))
-        .route("/v1/lines/catalog", get(line_catalog))
-        .route("/v1/lines/{line_name}/stations", get(line_stations))
-        .route(
-            "/v1/operators/{operator_name}/stations",
-            get(operator_stations),
-        )
-        .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
-        .with_state(state);
+    let app = app(state);
 
     info!("starting {} on {}", config.service_name, config.bind_addr);
 
@@ -87,13 +99,30 @@ async fn main() {
     axum::serve(listener, app).await.expect("server failed");
 }
 
-async fn health(State(state): State<AppState>) -> impl IntoResponse {
-    Json(HealthResponse {
-        status: "ok",
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "station-api",
+    responses(
+        (status = 200, description = "Liveness check.", body = HealthResponseDto)
+    )
+)]
+async fn health(State(state): State<AppState>) -> Json<HealthResponseDto> {
+    Json(HealthResponseDto {
+        status: "ok".to_string(),
         service: state.config.service_name,
     })
 }
 
+#[utoipa::path(
+    get,
+    path = "/ready",
+    tag = "station-api",
+    responses(
+        (status = 200, description = "Readiness check succeeded.", body = ReadinessResponseDto),
+        (status = 503, description = "Readiness check failed.", body = ReadinessResponseDto)
+    )
+)]
 async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     let cache = match (&state.config.redis_url, state.config.ready_require_cache) {
         (Some(_), true) => "required",
@@ -105,40 +134,51 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         .execute(&state.pool)
         .await
     {
-        Ok(_) => Json(ReadyResponse {
-            status: "ready",
+        Ok(_) => Json(ReadinessResponseDto {
+            status: "ready".to_string(),
             database_type: state.config.database_type.to_string(),
-            cache,
+            cache: cache.to_string(),
         })
         .into_response(),
         Err(err) => {
             error!(error = %err, "database readiness check failed");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({
-                    "status": "not_ready",
-                    "database_type": state.config.database_type.to_string(),
-                    "cache": cache,
-                })),
+                Json(ReadinessResponseDto {
+                    status: "not_ready".to_string(),
+                    database_type: state.config.database_type.to_string(),
+                    cache: cache.to_string(),
+                }),
             )
                 .into_response()
         }
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/stations/search",
+    tag = "station-api",
+    params(SearchParams),
+    responses(
+        (status = 200, description = "Station search results.", body = StationSearchResponseDto),
+        (status = 400, description = "Invalid query parameters.", body = ApiErrorResponseDto),
+        (status = 500, description = "Internal server error.", body = ApiErrorResponseDto)
+    )
+)]
 async fn search_stations(
     State(state): State<AppState>,
-    Query(params): Query<SearchParams>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    ApiQuery(params): ApiQuery<SearchParams>,
+) -> ApiResult<StationSearchResponseDto> {
     let query = params.q.unwrap_or_default().trim().to_string();
     let limit = normalized_limit(params.limit);
 
     if query.is_empty() {
-        return Ok(Json(json!({
-            "items": [],
-            "limit": limit,
-            "query": query,
-        })));
+        return Ok(Json(StationSearchResponseDto {
+            items: Vec::new(),
+            limit,
+            query,
+        }));
     }
 
     let like = format!("%{query}%");
@@ -186,16 +226,23 @@ async fn search_stations(
         .collect::<Result<Vec<_>, _>>()
         .map_err(internal_error)?;
 
-    Ok(Json(json!({
-        "items": items,
-        "limit": limit,
-        "query": query,
-    })))
+    Ok(Json(StationSearchResponseDto {
+        items,
+        limit,
+        query,
+    }))
 }
 
-async fn dataset_status(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+#[utoipa::path(
+    get,
+    path = "/v1/dataset/status",
+    tag = "station-api",
+    responses(
+        (status = 200, description = "Current dataset status.", body = DatasetStatusResponseDto),
+        (status = 500, description = "Internal server error.", body = ApiErrorResponseDto)
+    )
+)]
+async fn dataset_status(State(state): State<AppState>) -> ApiResult<DatasetStatusResponseDto> {
     let n02_where_clause = format!(
         "WHERE {}",
         prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len())
@@ -256,32 +303,299 @@ async fn dataset_status(
         let source_url =
             decode_required_string(&row, "source_url").map_err(map_anyhow_to_sqlx_error)?;
 
-        Ok::<Value, sqlx::Error>(json!({
-            "id": id,
-            "source_version": source_version,
-            "source_url": source_url,
-        }))
+        Ok::<DatasetSnapshotRefDto, sqlx::Error>(DatasetSnapshotRefDto {
+            id,
+            source_version,
+            source_url,
+        })
     });
     let active_snapshot = active_snapshot.transpose().map_err(internal_error)?;
 
     let source_url = active_snapshot
         .as_ref()
-        .and_then(|snapshot| snapshot.get("source_url"))
-        .and_then(Value::as_str)
+        .map(|snapshot| snapshot.source_url.as_str())
         .unwrap_or_default();
     let source_is_local = !(source_url.is_empty() || is_remote_http_url(source_url));
     let looks_like_full_dataset = active_station_count >= FULL_DATASET_MIN_STATION_COUNT;
 
-    Ok(Json(json!({
-        "status": if looks_like_full_dataset { "ready" } else { "needs_ingest" },
-        "looks_like_full_dataset": looks_like_full_dataset,
-        "source_is_local": source_is_local,
-        "active_station_count": active_station_count,
-        "distinct_station_name_count": distinct_station_name_count,
-        "distinct_line_count": distinct_line_count,
-        "active_version_snapshot_count": active_version_snapshot_count,
-        "active_snapshot": active_snapshot,
-    })))
+    Ok(Json(DatasetStatusResponseDto {
+        status: if looks_like_full_dataset {
+            "ready".to_string()
+        } else {
+            "needs_ingest".to_string()
+        },
+        looks_like_full_dataset,
+        source_is_local,
+        active_station_count,
+        distinct_station_name_count,
+        distinct_line_count,
+        active_version_snapshot_count,
+        active_snapshot,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/dataset/snapshots",
+    tag = "station-api",
+    params(DatasetSnapshotsParams),
+    responses(
+        (status = 200, description = "Recent dataset snapshots for the canonical N02 source.", body = DatasetSnapshotsResponseDto),
+        (status = 400, description = "Invalid query parameters.", body = ApiErrorResponseDto),
+        (status = 500, description = "Internal server error.", body = ApiErrorResponseDto)
+    )
+)]
+async fn dataset_snapshots(
+    State(state): State<AppState>,
+    ApiQuery(params): ApiQuery<DatasetSnapshotsParams>,
+) -> ApiResult<DatasetSnapshotsResponseDto> {
+    let limit = normalized_history_limit(params.limit);
+    let downloaded_at_expr = state.dialect.text_cast("ss.downloaded_at");
+    let version_prefix_scope =
+        prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len());
+    let change_prefix_scope =
+        prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len());
+    let version_count_expr = integer_aggregate_sql(state.dialect, "COUNT(*)");
+    let created_count_expr = integer_aggregate_sql(
+        state.dialect,
+        "SUM(CASE WHEN change_kind = 'created' THEN 1 ELSE 0 END)",
+    );
+    let updated_count_expr = integer_aggregate_sql(
+        state.dialect,
+        "SUM(CASE WHEN change_kind = 'updated' THEN 1 ELSE 0 END)",
+    );
+    let removed_count_expr = integer_aggregate_sql(
+        state.dialect,
+        "SUM(CASE WHEN change_kind = 'removed' THEN 1 ELSE 0 END)",
+    );
+    let station_version_count_select =
+        integer_aggregate_sql(state.dialect, "version_counts.station_version_count");
+    let created_count_select = integer_aggregate_sql(state.dialect, "change_counts.created_count");
+    let updated_count_select = integer_aggregate_sql(state.dialect, "change_counts.updated_count");
+    let removed_count_select = integer_aggregate_sql(state.dialect, "change_counts.removed_count");
+    let sql = format!(
+        "SELECT
+           ss.id,
+           ss.source_name,
+           ss.source_kind,
+           ss.source_version,
+           ss.source_url,
+           ss.source_sha256,
+           {downloaded_at_expr} AS downloaded_at,
+           {station_version_count_select} AS station_version_count,
+           {created_count_select} AS created_count,
+           {updated_count_select} AS updated_count,
+           {removed_count_select} AS removed_count
+         FROM source_snapshots AS ss
+         LEFT JOIN (
+           SELECT
+             snapshot_id,
+             {version_count_expr} AS station_version_count
+           FROM station_versions
+           WHERE {version_prefix_scope}
+           GROUP BY snapshot_id
+         ) AS version_counts
+           ON version_counts.snapshot_id = ss.id
+         LEFT JOIN (
+           SELECT
+             snapshot_id,
+             {created_count_expr} AS created_count,
+             {updated_count_expr} AS updated_count,
+             {removed_count_expr} AS removed_count
+           FROM station_change_events
+           WHERE {change_prefix_scope}
+           GROUP BY snapshot_id
+         ) AS change_counts
+           ON change_counts.snapshot_id = ss.id
+         WHERE ss.source_name = ?
+         ORDER BY ss.id DESC
+         LIMIT ?",
+    );
+    let rows = sqlx::query(&state.dialect.statement(&sql))
+        .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
+        .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
+        .bind(N02_SOURCE_NAME)
+        .bind(limit)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(internal_error)?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            let created = row.try_get::<i64, _>("created_count")?;
+            let updated = row.try_get::<i64, _>("updated_count")?;
+            let removed = row.try_get::<i64, _>("removed_count")?;
+
+            Ok(DatasetSnapshotDto {
+                id: row.try_get::<i64, _>("id")?,
+                source_name: decode_required_string(&row, "source_name")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                source_kind: decode_required_string(&row, "source_kind")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                source_version: decode_optional_string(&row, "source_version")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                source_url: decode_required_string(&row, "source_url")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                source_sha256: decode_required_string(&row, "source_sha256")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                downloaded_at: decode_required_string(&row, "downloaded_at")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                station_version_count: row.try_get::<i64, _>("station_version_count")?,
+                change_counts: DatasetSnapshotChangeCountsDto {
+                    created,
+                    updated,
+                    removed,
+                    total: created + updated + removed,
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(internal_error)?;
+
+    Ok(Json(DatasetSnapshotsResponseDto { items, limit }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/dataset/changes",
+    tag = "station-api",
+    params(DatasetChangesParams),
+    responses(
+        (status = 200, description = "Recent dataset change events for the canonical N02 source.", body = DatasetChangesResponseDto),
+        (status = 400, description = "Invalid query parameters.", body = ApiErrorResponseDto),
+        (status = 404, description = "Requested snapshot was not found.", body = ApiErrorResponseDto),
+        (status = 500, description = "Internal server error.", body = ApiErrorResponseDto)
+    )
+)]
+async fn dataset_changes(
+    State(state): State<AppState>,
+    ApiQuery(params): ApiQuery<DatasetChangesParams>,
+) -> ApiResult<DatasetChangesResponseDto> {
+    let limit = normalized_history_limit(params.limit);
+
+    if let Some(snapshot_id) = params.snapshot_id {
+        ensure_dataset_snapshot_exists(&state, snapshot_id).await?;
+    }
+
+    let created_at_expr = state.dialect.text_cast("sce.created_at");
+    let station_uid_scope = prefix_scope_sql(
+        state.dialect,
+        "sce.station_uid",
+        N02_STATION_UID_PREFIX.len(),
+    );
+    let snapshot_filter = if params.snapshot_id.is_some() {
+        " AND sce.snapshot_id = ?"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "SELECT
+           sce.id,
+           sce.snapshot_id,
+           ss.source_version,
+           sce.station_uid,
+           sce.change_kind,
+           sce.before_version_id,
+           sce.after_version_id,
+           sce.detail_json,
+           {created_at_expr} AS created_at,
+           COALESCE(after_sv.station_name, before_sv.station_name) AS station_name,
+           COALESCE(after_sv.line_name, before_sv.line_name) AS line_name,
+           COALESCE(after_sv.operator_name, before_sv.operator_name) AS operator_name
+         FROM station_change_events AS sce
+         INNER JOIN source_snapshots AS ss
+           ON ss.id = sce.snapshot_id
+         LEFT JOIN station_versions AS before_sv
+           ON before_sv.id = sce.before_version_id
+         LEFT JOIN station_versions AS after_sv
+           ON after_sv.id = sce.after_version_id
+         WHERE ss.source_name = ?
+           AND {station_uid_scope}
+           {snapshot_filter}
+         ORDER BY sce.id DESC
+         LIMIT ?",
+    );
+    let statement = state.dialect.statement(&sql);
+    let mut query = sqlx::query(&statement)
+        .bind(N02_SOURCE_NAME)
+        .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX));
+
+    if let Some(snapshot_id) = params.snapshot_id {
+        query = query.bind(snapshot_id);
+    }
+
+    let rows = query
+        .bind(limit)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(internal_error)?;
+
+    let items = rows
+        .into_iter()
+        .map(|row| {
+            let detail = decode_optional_string(&row, "detail_json")
+                .map_err(map_anyhow_to_sqlx_error)?
+                .map(|detail_json| serde_json::from_str::<DatasetChangeDetailDto>(&detail_json))
+                .transpose()
+                .map_err(anyhow::Error::from)
+                .map_err(map_anyhow_to_sqlx_error)?
+                .unwrap_or_default();
+
+            Ok(DatasetChangeEventDto {
+                id: row.try_get::<i64, _>("id")?,
+                snapshot_id: row.try_get::<i64, _>("snapshot_id")?,
+                source_version: decode_optional_string(&row, "source_version")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                station_uid: decode_required_string(&row, "station_uid")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                change_kind: row_to_change_kind(&row)?,
+                station_name: decode_optional_string(&row, "station_name")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                line_name: decode_optional_string(&row, "line_name")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                operator_name: decode_optional_string(&row, "operator_name")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+                before_version_id: row.try_get::<Option<i64>, _>("before_version_id")?,
+                after_version_id: row.try_get::<Option<i64>, _>("after_version_id")?,
+                detail,
+                created_at: decode_required_string(&row, "created_at")
+                    .map_err(map_anyhow_to_sqlx_error)?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(internal_error)?;
+
+    Ok(Json(DatasetChangesResponseDto {
+        items,
+        limit,
+        snapshot_id: params.snapshot_id,
+    }))
+}
+
+async fn ensure_dataset_snapshot_exists(
+    state: &AppState,
+    snapshot_id: i64,
+) -> Result<(), ApiError> {
+    let exists = sqlx::query(&state.dialect.statement(
+        "SELECT id
+         FROM source_snapshots
+         WHERE id = ? AND source_name = ?
+         LIMIT 1",
+    ))
+    .bind(snapshot_id)
+    .bind(N02_SOURCE_NAME)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(internal_error)?;
+
+    if exists.is_some() {
+        Ok(())
+    } else {
+        Err(ApiError::not_found(format!(
+            "dataset snapshot {snapshot_id} was not found"
+        )))
+    }
 }
 
 fn is_remote_http_url(url: &str) -> bool {
@@ -292,10 +606,21 @@ fn is_remote_http_url(url: &str) -> bool {
     scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/stations/nearby",
+    tag = "station-api",
+    params(NearbyParams),
+    responses(
+        (status = 200, description = "Nearby station results.", body = NearbyStationsResponseDto),
+        (status = 400, description = "Invalid query parameters.", body = ApiErrorResponseDto),
+        (status = 500, description = "Internal server error.", body = ApiErrorResponseDto)
+    )
+)]
 async fn nearby_stations(
     State(state): State<AppState>,
-    Query(params): Query<NearbyParams>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    ApiQuery(params): ApiQuery<NearbyParams>,
+) -> ApiResult<NearbyStationsResponseDto> {
     let limit = normalized_limit(params.limit);
     let rows = sqlx::query(&state.dialect.statement(
         "SELECT
@@ -328,20 +653,31 @@ async fn nearby_stations(
         .collect::<Result<Vec<_>, _>>()
         .map_err(internal_error)?;
 
-    Ok(Json(json!({
-        "items": items,
-        "limit": limit,
-        "query": {
-            "lat": params.lat,
-            "lng": params.lng,
-        }
-    })))
+    Ok(Json(NearbyStationsResponseDto {
+        items,
+        limit,
+        query: NearbyStationsQueryDto {
+            lat: params.lat,
+            lng: params.lng,
+        },
+    }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/lines/catalog",
+    tag = "station-api",
+    params(LineCatalogParams),
+    responses(
+        (status = 200, description = "Line catalog search results.", body = LineCatalogResponseDto),
+        (status = 400, description = "Invalid query parameters.", body = ApiErrorResponseDto),
+        (status = 500, description = "Internal server error.", body = ApiErrorResponseDto)
+    )
+)]
 async fn line_catalog(
     State(state): State<AppState>,
-    Query(params): Query<SearchParams>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    ApiQuery(params): ApiQuery<LineCatalogParams>,
+) -> ApiResult<LineCatalogResponseDto> {
     let query = params.q.unwrap_or_default().trim().to_string();
     let limit = normalized_catalog_limit(params.limit);
     let line_name_expr = text_group_sql(state.dialect, "line_name");
@@ -383,29 +719,43 @@ async fn line_catalog(
     let items = rows
         .into_iter()
         .map(|row| {
-            Ok(json!({
-                "line_name": decode_required_string(&row, "line_name")
+            Ok(LineCatalogItemDto {
+                line_name: decode_required_string(&row, "line_name")
                     .map_err(map_anyhow_to_sqlx_error)?,
-                "operator_name": decode_required_string(&row, "operator_name")
+                operator_name: decode_required_string(&row, "operator_name")
                     .map_err(map_anyhow_to_sqlx_error)?,
-                "station_count": row.try_get::<i64, _>("station_count")?,
-            }))
+                station_count: row.try_get::<i64, _>("station_count")?,
+            })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()
         .map_err(internal_error)?;
 
-    Ok(Json(json!({
-        "items": items,
-        "limit": limit,
-        "query": query,
-    })))
+    Ok(Json(LineCatalogResponseDto {
+        items,
+        limit,
+        query,
+    }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/lines/{line_name}/stations",
+    tag = "station-api",
+    params(
+        ("line_name" = String, Path, description = "Exact line name."),
+        LineStationsParams
+    ),
+    responses(
+        (status = 200, description = "Stations on the requested line.", body = LineStationsResponseDto),
+        (status = 400, description = "Invalid query parameters.", body = ApiErrorResponseDto),
+        (status = 500, description = "Internal server error.", body = ApiErrorResponseDto)
+    )
+)]
 async fn line_stations(
     State(state): State<AppState>,
     Path(line_name): Path<String>,
-    Query(params): Query<LineStationsParams>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    ApiQuery(params): ApiQuery<LineStationsParams>,
+) -> ApiResult<LineStationsResponseDto> {
     let line_name_match = text_equals_sql(state.dialect, "line_name");
     let operator_name_match = text_equals_sql(state.dialect, "operator_name");
     let operator_name_order = text_order_sql(state.dialect, "operator_name");
@@ -414,7 +764,8 @@ async fn line_stations(
         .operator_name
         .as_deref()
         .map(str::trim)
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let where_clause = if operator_name.is_some() {
         format!("{line_name_match} AND {operator_name_match}")
     } else {
@@ -434,7 +785,7 @@ async fn line_stations(
          ORDER BY {operator_name_order}, {station_name_order}",
     );
     let statement = state.dialect.statement(&sql);
-    let rows = if let Some(operator_name) = operator_name {
+    let rows = if let Some(operator_name) = operator_name.as_deref() {
         sqlx::query(&statement)
             .bind(&line_name)
             .bind(operator_name)
@@ -454,17 +805,29 @@ async fn line_stations(
         .collect::<Result<Vec<_>, _>>()
         .map_err(internal_error)?;
 
-    Ok(Json(json!({
-        "line_name": line_name,
-        "operator_name": operator_name,
-        "items": items,
-    })))
+    Ok(Json(LineStationsResponseDto {
+        line_name,
+        operator_name,
+        items,
+    }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/operators/{operator_name}/stations",
+    tag = "station-api",
+    params(
+        ("operator_name" = String, Path, description = "Exact operator name.")
+    ),
+    responses(
+        (status = 200, description = "Stations operated by the requested operator.", body = OperatorStationsResponseDto),
+        (status = 500, description = "Internal server error.", body = ApiErrorResponseDto)
+    )
+)]
 async fn operator_stations(
     State(state): State<AppState>,
     Path(operator_name): Path<String>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> ApiResult<OperatorStationsResponseDto> {
     let operator_name_match = text_equals_sql(state.dialect, "operator_name");
     let line_name_order = text_order_sql(state.dialect, "line_name");
     let station_name_order = text_order_sql(state.dialect, "station_name");
@@ -493,10 +856,10 @@ async fn operator_stations(
         .collect::<Result<Vec<_>, _>>()
         .map_err(internal_error)?;
 
-    Ok(Json(json!({
-        "operator_name": operator_name,
-        "items": items,
-    })))
+    Ok(Json(OperatorStationsResponseDto {
+        operator_name,
+        items,
+    }))
 }
 
 fn normalized_limit(limit: Option<u32>) -> i64 {
@@ -507,8 +870,26 @@ fn normalized_catalog_limit(limit: Option<u32>) -> i64 {
     i64::from(limit.unwrap_or(60).clamp(1, 1000))
 }
 
-fn row_to_station_summary(row: sqlx::any::AnyRow) -> Result<StationSummary, sqlx::Error> {
-    Ok(StationSummary {
+fn normalized_history_limit(limit: Option<u32>) -> i64 {
+    i64::from(limit.unwrap_or(20).clamp(1, 200))
+}
+
+fn row_to_change_kind(row: &sqlx::any::AnyRow) -> Result<DatasetChangeKindDto, sqlx::Error> {
+    match decode_required_string(row, "change_kind")
+        .map_err(map_anyhow_to_sqlx_error)?
+        .as_str()
+    {
+        "created" => Ok(DatasetChangeKindDto::Created),
+        "updated" => Ok(DatasetChangeKindDto::Updated),
+        "removed" => Ok(DatasetChangeKindDto::Removed),
+        other => Err(sqlx::Error::Decode(
+            anyhow::anyhow!("unsupported change_kind: {other}").into(),
+        )),
+    }
+}
+
+fn row_to_station_summary(row: sqlx::any::AnyRow) -> Result<StationSummaryDto, sqlx::Error> {
+    Ok(StationSummaryDto {
         station_uid: decode_required_string(&row, "station_uid")
             .map_err(map_anyhow_to_sqlx_error)?,
         station_name: decode_required_string(&row, "station_name")
@@ -527,16 +908,6 @@ fn map_anyhow_to_sqlx_error(error: anyhow::Error) -> sqlx::Error {
         Ok(error) => error,
         Err(error) => sqlx::Error::Decode(error.into()),
     }
-}
-
-fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
-    error!(error = %error, "API request failed");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({
-            "error": "internal_server_error",
-        })),
-    )
 }
 
 #[cfg(test)]
@@ -578,10 +949,13 @@ fn text_group_sql(dialect: SqlDialect, column: &str) -> String {
 #[cfg(test)]
 mod tests {
     use axum::{
-        extract::{Path, Query, State},
-        http::StatusCode,
+        body::{to_bytes, Body},
+        extract::{Path, State},
+        http::{Request, StatusCode},
+        response::IntoResponse,
     };
-    use sqlx::{any::AnyPoolOptions, AnyPool};
+    use serde_json::Value;
+    use sqlx::{any::AnyPoolOptions, AnyPool, Row};
     use station_shared::{
         config::{AppConfig, DatabaseType},
         db::{
@@ -589,12 +963,15 @@ mod tests {
             like_prefix_pattern, prefix_scope_arg, prefix_scope_sql, SqlDialect,
         },
     };
+    use tower::util::ServiceExt;
 
     use super::{
-        dataset_status, line_catalog, line_stations, map_anyhow_to_sqlx_error,
-        nullable_integer_aggregate_sql, operator_stations, search_stations, text_equals_sql,
-        text_group_sql, text_like_sql, text_order_sql, AppState, LineStationsParams, SearchParams,
-        N02_SOURCE_NAME, N02_STATION_UID_PREFIX,
+        app, dataset_changes, dataset_snapshots, dataset_status, line_catalog, line_stations,
+        map_anyhow_to_sqlx_error, nullable_integer_aggregate_sql, operator_stations,
+        search_stations, text_equals_sql, text_group_sql, text_like_sql, text_order_sql, ApiQuery,
+        AppState, DatasetChangeKindDto, DatasetChangesParams, DatasetSnapshotsParams,
+        LineCatalogParams, LineStationsParams, SearchParams, N02_SOURCE_NAME,
+        N02_STATION_UID_PREFIX,
     };
 
     #[test]
@@ -724,6 +1101,327 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn app_contract_routes_return_expected_shapes() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 1).await;
+        let shinjuku_version_id = insert_station(
+            &pool,
+            1,
+            StationSeed::new(
+                "stn_n02_shinjuku",
+                "新宿",
+                "山手線",
+                "東日本旅客鉄道",
+                35.6909,
+                139.7003,
+            ),
+        )
+        .await;
+        insert_change_event(
+            &pool,
+            1,
+            "stn_n02_shinjuku",
+            "created",
+            None,
+            Some(shinjuku_version_id),
+            r#"{"station_name":"新宿","line_name":"山手線","operator_name":"東日本旅客鉄道"}"#,
+        )
+        .await;
+
+        let app = app(test_state(pool));
+
+        let health = json_body(app.clone().oneshot(get("/health")).await.unwrap()).await;
+        assert_eq!(health["status"].as_str(), Some("ok"));
+
+        let ready = json_body(app.clone().oneshot(get("/ready")).await.unwrap()).await;
+        assert_eq!(ready["status"].as_str(), Some("ready"));
+
+        let dataset = json_body(
+            app.clone()
+                .oneshot(get("/v1/dataset/status"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(dataset["active_station_count"].as_i64(), Some(1));
+
+        let search = json_body(
+            app.clone()
+                .oneshot(get("/v1/stations/search?q=%E6%96%B0%E5%AE%BF&limit=1"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(search["items"].as_array().map(Vec::len), Some(1));
+
+        let snapshots = json_body(
+            app.clone()
+                .oneshot(get("/v1/dataset/snapshots?limit=1"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(snapshots["items"].as_array().map(Vec::len), Some(1));
+
+        let changes = json_body(
+            app.clone()
+                .oneshot(get("/v1/dataset/changes?limit=1"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(changes["items"].as_array().map(Vec::len), Some(1));
+
+        let nearby = json_body(
+            app.oneshot(get("/v1/stations/nearby?lat=35.6909&lng=139.7003&limit=1"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(nearby["items"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[tokio::test]
+    async fn openapi_json_lists_current_public_paths() {
+        let app = app(test_state(test_pool().await));
+        let response = app.oneshot(get("/openapi.json")).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = json_body(response).await;
+        let paths = body["paths"].as_object().unwrap();
+
+        for path in [
+            "/health",
+            "/ready",
+            "/v1/dataset/status",
+            "/v1/dataset/snapshots",
+            "/v1/dataset/changes",
+            "/v1/stations/search",
+            "/v1/stations/nearby",
+            "/v1/lines/catalog",
+            "/v1/lines/{line_name}/stations",
+            "/v1/operators/{operator_name}/stations",
+        ] {
+            assert!(paths.contains_key(path), "missing path {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn openapi_json_documents_line_catalog_limit_up_to_1000() {
+        let app = app(test_state(test_pool().await));
+        let response = app.oneshot(get("/openapi.json")).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = json_body(response).await;
+        let parameters = body["paths"]["/v1/lines/catalog"]["get"]["parameters"]
+            .as_array()
+            .unwrap();
+        let limit = parameters
+            .iter()
+            .find(|parameter| parameter["name"].as_str() == Some("limit"))
+            .unwrap();
+
+        assert_eq!(limit["schema"]["minimum"].as_i64(), Some(1));
+        assert_eq!(limit["schema"]["maximum"].as_i64(), Some(1000));
+    }
+
+    #[tokio::test]
+    async fn docs_entrypoint_redirects_and_html_is_served() {
+        let app = app(test_state(test_pool().await));
+
+        let redirect = app.clone().oneshot(get("/docs")).await.unwrap();
+        assert_eq!(redirect.status(), StatusCode::SEE_OTHER);
+
+        let docs = app.oneshot(get("/docs/")).await.unwrap();
+        assert_eq!(docs.status(), StatusCode::OK);
+        assert!(docs
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/html")));
+
+        let body = text_body(docs).await;
+        assert!(body.contains("Swagger UI"));
+    }
+
+    #[tokio::test]
+    async fn invalid_query_parameters_return_standard_error_shape() {
+        let app = app(test_state(test_pool().await));
+        let response = app
+            .oneshot(get("/v1/stations/nearby?lat=abc&lng=139.7003"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = json_body(response).await;
+        assert_eq!(body["error"]["code"].as_str(), Some("invalid_request"));
+        assert!(body["error"]["message"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn dataset_snapshots_returns_recent_history_with_counts() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 24).await;
+        insert_snapshot(&pool, 25).await;
+
+        let old_version_id = insert_station(
+            &pool,
+            24,
+            StationSeed::new("stn_n02_old", "旧駅", "旧線", "旧交通", 35.6000, 139.6000),
+        )
+        .await;
+        let new_version_id = insert_station(
+            &pool,
+            25,
+            StationSeed::new("stn_n02_new", "新駅", "新線", "新交通", 35.7000, 139.7000),
+        )
+        .await;
+
+        insert_change_event(
+            &pool,
+            24,
+            "stn_n02_old",
+            "created",
+            None,
+            Some(old_version_id),
+            r#"{"station_name":"旧駅","line_name":"旧線","operator_name":"旧交通"}"#,
+        )
+        .await;
+        insert_change_event(
+            &pool,
+            25,
+            "stn_n02_new",
+            "created",
+            None,
+            Some(new_version_id),
+            r#"{"station_name":"新駅","line_name":"新線","operator_name":"新交通"}"#,
+        )
+        .await;
+        insert_change_event(
+            &pool,
+            25,
+            "stn_n02_old",
+            "removed",
+            Some(old_version_id),
+            None,
+            r#"{"station_name":"旧駅","line_name":"旧線","operator_name":"旧交通"}"#,
+        )
+        .await;
+
+        let response = dataset_snapshots(
+            State(test_state(pool)),
+            ApiQuery::new(DatasetSnapshotsParams { limit: Some(10) }),
+        )
+        .await
+        .unwrap()
+        .0;
+
+        assert_eq!(response.items.len(), 2);
+        assert_eq!(response.items[0].id, 25);
+        assert_eq!(response.items[0].station_version_count, 1);
+        assert_eq!(response.items[0].change_counts.created, 1);
+        assert_eq!(response.items[0].change_counts.removed, 1);
+        assert_eq!(response.items[0].change_counts.total, 2);
+        assert_eq!(response.items[1].id, 24);
+        assert_eq!(response.items[1].change_counts.created, 1);
+    }
+
+    #[tokio::test]
+    async fn dataset_changes_filters_by_snapshot_and_preserves_removed_station_context() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 24).await;
+        insert_snapshot(&pool, 25).await;
+
+        let old_version_id = insert_station(
+            &pool,
+            24,
+            StationSeed::new("stn_n02_old", "旧駅", "旧線", "旧交通", 35.6000, 139.6000),
+        )
+        .await;
+        let new_version_id = insert_station(
+            &pool,
+            25,
+            StationSeed::new("stn_n02_new", "新駅", "新線", "新交通", 35.7000, 139.7000),
+        )
+        .await;
+
+        insert_change_event(
+            &pool,
+            25,
+            "stn_n02_new",
+            "created",
+            None,
+            Some(new_version_id),
+            r#"{"station_name":"新駅","line_name":"新線","operator_name":"新交通"}"#,
+        )
+        .await;
+        insert_change_event(
+            &pool,
+            25,
+            "stn_n02_old",
+            "removed",
+            Some(old_version_id),
+            None,
+            r#"{"station_name":"旧駅","line_name":"旧線","operator_name":"旧交通"}"#,
+        )
+        .await;
+
+        let response = dataset_changes(
+            State(test_state(pool)),
+            ApiQuery::new(DatasetChangesParams {
+                snapshot_id: Some(25),
+                limit: Some(10),
+            }),
+        )
+        .await
+        .unwrap()
+        .0;
+
+        assert_eq!(response.snapshot_id, Some(25));
+        assert_eq!(response.items.len(), 2);
+
+        let removed = response
+            .items
+            .iter()
+            .find(|item| item.change_kind == DatasetChangeKindDto::Removed)
+            .unwrap();
+        assert_eq!(removed.station_name.as_deref(), Some("旧駅"));
+        assert_eq!(removed.line_name.as_deref(), Some("旧線"));
+        assert_eq!(removed.after_version_id, None);
+        assert_eq!(removed.detail.station_name.as_deref(), Some("旧駅"));
+
+        let created = response
+            .items
+            .iter()
+            .find(|item| item.change_kind == DatasetChangeKindDto::Created)
+            .unwrap();
+        assert_eq!(created.source_version.as_deref(), Some("N02-25"));
+        assert_eq!(created.station_name.as_deref(), Some("新駅"));
+    }
+
+    #[tokio::test]
+    async fn dataset_changes_returns_not_found_for_unknown_snapshot() {
+        let response = dataset_changes(
+            State(test_state(test_pool().await)),
+            ApiQuery::new(DatasetChangesParams {
+                snapshot_id: Some(999),
+                limit: Some(10),
+            }),
+        )
+        .await
+        .unwrap_err()
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = json_body(response).await;
+        assert_eq!(body["error"]["code"].as_str(), Some("not_found"));
+    }
+
+    #[tokio::test]
     async fn line_stations_keeps_enoshima_variants_separate() {
         let pool = test_pool().await;
         insert_snapshot(&pool, 1).await;
@@ -758,34 +1456,34 @@ mod tests {
         let response = line_stations(
             State(state.clone()),
             Path("江の島線".to_string()),
-            Query(LineStationsParams {
+            ApiQuery::new(LineStationsParams {
                 operator_name: None,
             }),
         )
         .await
         .unwrap()
         .0;
-        let items = response["items"].as_array().unwrap();
+        let items = response.items;
 
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["station_name"].as_str(), Some("片瀬江ノ島"));
-        assert_eq!(items[0]["line_name"].as_str(), Some("江の島線"));
+        assert_eq!(items[0].station_name, "片瀬江ノ島");
+        assert_eq!(items[0].line_name, "江の島線");
 
         let response = line_stations(
             State(state),
             Path("江ノ島線".to_string()),
-            Query(LineStationsParams {
+            ApiQuery::new(LineStationsParams {
                 operator_name: None,
             }),
         )
         .await
         .unwrap()
         .0;
-        let items = response["items"].as_array().unwrap();
+        let items = response.items;
 
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["station_name"].as_str(), Some("湘南江の島"));
-        assert_eq!(items[0]["line_name"].as_str(), Some("江ノ島線"));
+        assert_eq!(items[0].station_name, "湘南江の島");
+        assert_eq!(items[0].line_name, "江ノ島線");
     }
 
     #[tokio::test]
@@ -822,19 +1520,19 @@ mod tests {
         let response = line_stations(
             State(test_state(pool)),
             Path("中央線".to_string()),
-            Query(LineStationsParams {
+            ApiQuery::new(LineStationsParams {
                 operator_name: Some("東京地下鉄".to_string()),
             }),
         )
         .await
         .unwrap()
         .0;
-        let items = response["items"].as_array().unwrap();
+        let items = response.items;
 
-        assert_eq!(response["operator_name"].as_str(), Some("東京地下鉄"));
+        assert_eq!(response.operator_name.as_deref(), Some("東京地下鉄"));
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["operator_name"].as_str(), Some("東京地下鉄"));
-        assert_eq!(items[0]["station_name"].as_str(), Some("中野坂上"));
+        assert_eq!(items[0].operator_name, "東京地下鉄");
+        assert_eq!(items[0].station_name, "中野坂上");
     }
 
     #[tokio::test]
@@ -871,7 +1569,7 @@ mod tests {
         let state = test_state(pool);
         let response = search_stations(
             State(state.clone()),
-            Query(SearchParams {
+            ApiQuery::new(SearchParams {
                 q: Some("江ノ島".to_string()),
                 limit: Some(10),
             }),
@@ -879,15 +1577,15 @@ mod tests {
         .await
         .unwrap()
         .0;
-        let items = response["items"].as_array().unwrap();
+        let items = response.items;
 
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["station_name"].as_str(), Some("片瀬江ノ島"));
-        assert_eq!(items[0]["line_name"].as_str(), Some("江の島線"));
+        assert_eq!(items[0].station_name, "片瀬江ノ島");
+        assert_eq!(items[0].line_name, "江の島線");
 
         let response = search_stations(
             State(state),
-            Query(SearchParams {
+            ApiQuery::new(SearchParams {
                 q: Some("江の島".to_string()),
                 limit: Some(10),
             }),
@@ -895,11 +1593,11 @@ mod tests {
         .await
         .unwrap()
         .0;
-        let items = response["items"].as_array().unwrap();
+        let items = response.items;
 
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["station_name"].as_str(), Some("湘南江の島"));
-        assert_eq!(items[0]["line_name"].as_str(), Some("江ノ島線"));
+        assert_eq!(items[0].station_name, "湘南江の島");
+        assert_eq!(items[0].line_name, "江ノ島線");
     }
 
     #[tokio::test]
@@ -950,15 +1648,15 @@ mod tests {
             .await
             .unwrap()
             .0;
-        let items = response["items"].as_array().unwrap();
+        let items = response.items;
 
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0]["line_name"].as_str(), Some("江の島線"));
-        assert_eq!(items[0]["station_name"].as_str(), Some("片瀬江ノ島"));
-        assert_eq!(items[1]["line_name"].as_str(), Some("江の島線"));
-        assert_eq!(items[1]["station_name"].as_str(), Some("藤沢"));
-        assert_eq!(items[2]["line_name"].as_str(), Some("江ノ島線"));
-        assert_eq!(items[2]["station_name"].as_str(), Some("湘南江の島"));
+        assert_eq!(items[0].line_name, "江の島線");
+        assert_eq!(items[0].station_name, "片瀬江ノ島");
+        assert_eq!(items[1].line_name, "江の島線");
+        assert_eq!(items[1].station_name, "藤沢");
+        assert_eq!(items[2].line_name, "江ノ島線");
+        assert_eq!(items[2].station_name, "湘南江の島");
     }
 
     #[tokio::test]
@@ -994,7 +1692,7 @@ mod tests {
 
         let response = line_catalog(
             State(test_state(pool)),
-            Query(SearchParams {
+            ApiQuery::new(LineCatalogParams {
                 q: Some("江".to_string()),
                 limit: Some(10),
             }),
@@ -1002,18 +1700,18 @@ mod tests {
         .await
         .unwrap()
         .0;
-        let items = response["items"].as_array().unwrap();
+        let items = response.items;
 
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| {
-            item["line_name"].as_str() == Some("江の島線")
-                && item["operator_name"].as_str() == Some("小田急電鉄")
-                && item["station_count"].as_i64() == Some(1)
+            item.line_name == "江の島線"
+                && item.operator_name == "小田急電鉄"
+                && item.station_count == 1
         }));
         assert!(items.iter().any(|item| {
-            item["line_name"].as_str() == Some("江ノ島線")
-                && item["operator_name"].as_str() == Some("湘南モノレール")
-                && item["station_count"].as_i64() == Some(1)
+            item.line_name == "江ノ島線"
+                && item.operator_name == "湘南モノレール"
+                && item.station_count == 1
         }));
     }
 
@@ -1050,7 +1748,7 @@ mod tests {
 
         let response = line_catalog(
             State(test_state(pool)),
-            Query(SearchParams {
+            ApiQuery::new(LineCatalogParams {
                 q: Some("中央".to_string()),
                 limit: Some(10),
             }),
@@ -1058,16 +1756,14 @@ mod tests {
         .await
         .unwrap()
         .0;
-        let items = response["items"].as_array().unwrap();
+        let items = response.items;
 
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| {
-            item["line_name"].as_str() == Some("中央線")
-                && item["operator_name"].as_str() == Some("東日本旅客鉄道")
+            item.line_name == "中央線" && item.operator_name == "東日本旅客鉄道"
         }));
         assert!(items.iter().any(|item| {
-            item["line_name"].as_str() == Some("中央線")
-                && item["operator_name"].as_str() == Some("東京地下鉄")
+            item.line_name == "中央線" && item.operator_name == "東京地下鉄"
         }));
     }
 
@@ -1118,13 +1814,22 @@ mod tests {
 
         let response = dataset_status(State(test_state(pool))).await.unwrap().0;
 
-        assert_eq!(response["active_station_count"].as_i64(), Some(2));
-        assert_eq!(response["distinct_station_name_count"].as_i64(), Some(2));
-        assert_eq!(response["distinct_line_count"].as_i64(), Some(2));
-        assert_eq!(response["active_version_snapshot_count"].as_i64(), Some(2));
-        assert_eq!(response["active_snapshot"]["id"].as_i64(), Some(25));
+        assert_eq!(response.active_station_count, 2);
+        assert_eq!(response.distinct_station_name_count, 2);
+        assert_eq!(response.distinct_line_count, 2);
+        assert_eq!(response.active_version_snapshot_count, 2);
         assert_eq!(
-            response["active_snapshot"]["source_version"].as_str(),
+            response
+                .active_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.id),
+            Some(25)
+        );
+        assert_eq!(
+            response
+                .active_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.source_version.as_deref()),
             Some("N02-25")
         );
     }
@@ -1146,9 +1851,12 @@ mod tests {
         .await
         .unwrap();
 
-        let error = dataset_status(State(test_state(pool))).await.unwrap_err();
+        let response = dataset_status(State(test_state(pool)))
+            .await
+            .unwrap_err()
+            .into_response();
 
-        assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]
@@ -1183,7 +1891,21 @@ mod tests {
 
         let response = dataset_status(State(test_state(pool))).await.unwrap().0;
 
-        assert_eq!(response["source_is_local"].as_bool(), Some(false));
+        assert!(!response.source_is_local);
+    }
+
+    fn get(uri: &str) -> Request<Body> {
+        Request::builder().uri(uri).body(Body::empty()).unwrap()
+    }
+
+    async fn json_body(response: axum::response::Response) -> Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    async fn text_body(response: axum::response::Response) -> String {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
     }
 
     fn test_state(pool: AnyPool) -> AppState {
@@ -1275,7 +1997,7 @@ mod tests {
         }
     }
 
-    async fn insert_station(pool: &AnyPool, snapshot_id: i64, station: StationSeed<'_>) {
+    async fn insert_station(pool: &AnyPool, snapshot_id: i64, station: StationSeed<'_>) -> i64 {
         sqlx::query(
             "INSERT INTO station_identities (station_uid, canonical_name)
              VALUES (?, ?)",
@@ -1310,6 +2032,45 @@ mod tests {
             "{}:{snapshot_id}:{}:{}",
             station.station_uid, station.line_name, station.station_name
         ))
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query("SELECT id FROM station_versions WHERE station_uid = ? AND snapshot_id = ?")
+            .bind(station.station_uid)
+            .bind(snapshot_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+            .try_get::<i64, _>("id")
+            .unwrap()
+    }
+
+    async fn insert_change_event(
+        pool: &AnyPool,
+        snapshot_id: i64,
+        station_uid: &str,
+        change_kind: &str,
+        before_version_id: Option<i64>,
+        after_version_id: Option<i64>,
+        detail_json: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO station_change_events (
+               snapshot_id,
+               station_uid,
+               change_kind,
+               before_version_id,
+               after_version_id,
+               detail_json
+             ) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(snapshot_id)
+        .bind(station_uid)
+        .bind(change_kind)
+        .bind(before_version_id)
+        .bind(after_version_id)
+        .bind(detail_json)
         .execute(pool)
         .await
         .unwrap();
