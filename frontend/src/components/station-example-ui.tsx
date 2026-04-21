@@ -1,7 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { DatasetStatus, StationSummary } from "../lib/station-sdk";
+import type {
+  DatasetChangeEvent,
+  DatasetSnapshot,
+  StationSummary
+} from "../lib/station-sdk";
+import type { DatasetStatus } from "../lib/dataset-status";
 
 const navItems = [
   { href: "/examples/station-search", label: "駅名検索" },
@@ -25,6 +30,48 @@ const panelStyle = {
 
 function googleMapsUrl(item: StationSummary) {
   return `https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}`;
+}
+
+function changeKindLabel(kind: DatasetChangeEvent["change_kind"]) {
+  switch (kind) {
+    case "created":
+      return "追加";
+    case "updated":
+      return "更新";
+    case "removed":
+      return "削除";
+    default:
+      return kind;
+  }
+}
+
+function changeKindPalette(kind: DatasetChangeEvent["change_kind"]) {
+  switch (kind) {
+    case "created":
+      return {
+        border: "1px solid #b8d99b",
+        background: "#f7fff0",
+        color: "#43610f"
+      } as const;
+    case "updated":
+      return {
+        border: "1px solid #d7dfc8",
+        background: "#f7faf2",
+        color: "#4b5563"
+      } as const;
+    case "removed":
+      return {
+        border: "1px solid #f1c36e",
+        background: "#fff8ec",
+        color: "#9a6700"
+      } as const;
+    default:
+      return {
+        border: "1px solid #d7dfc8",
+        background: "#ffffff",
+        color: "#4b5563"
+      } as const;
+  }
 }
 
 export function ExamplePage({
@@ -250,6 +297,243 @@ export function DatasetBanner({
       {snapshotSourceLabel ? (
         <div style={{ marginTop: 8, color: "#667085", wordBreak: "break-all", fontSize: 13 }}>
           {snapshotSourceLabel}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function DatasetHistoryPanels({
+  dataset,
+  snapshots,
+  changes,
+  loading,
+  error
+}: {
+  dataset: DatasetStatus | null;
+  snapshots: DatasetSnapshot[];
+  changes: DatasetChangeEvent[];
+  loading: boolean;
+  error: string | null;
+}) {
+  if (!dataset && !loading && !error) {
+    return null;
+  }
+
+  const datasetReady = dataset?.can_query_stations ?? false;
+
+  return (
+    <section style={{ marginTop: 18 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+          alignItems: "baseline"
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 13, color: "#43610f" }}>データ更新</div>
+          <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4 }}>直近の取り込みと差分</div>
+        </div>
+        <div style={{ color: "#667085", fontSize: 13 }}>latest available MLIT N02 snapshot を基準にしています。</div>
+      </div>
+
+      {loading ? <div style={{ marginTop: 14 }}><StatusNotice>履歴を読み込んでいます。</StatusNotice></div> : null}
+      {error ? <div style={{ marginTop: 14 }}><StatusNotice tone="error">{error}</StatusNotice></div> : null}
+      {!loading && !error && dataset && !datasetReady ? (
+        <div style={{ marginTop: 14 }}>
+          <StatusNotice tone="warning">全国駅データが揃うまで履歴は表示しません。</StatusNotice>
+        </div>
+      ) : null}
+
+      {!loading && !error && datasetReady ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+            gap: 16,
+            marginTop: 14
+          }}
+        >
+          <section style={panelStyle}>
+            <div style={{ fontSize: 13, color: "#667085" }}>取り込み履歴</div>
+            <div style={{ fontSize: 20, fontWeight: 700, marginTop: 4 }}>新しい snapshot から確認できます。</div>
+            <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+              {snapshots.length === 0 ? (
+                <div style={{ color: "#667085" }}>履歴はまだありません。</div>
+              ) : (
+                snapshots.map((snapshot) => (
+                  <article
+                    key={snapshot.id}
+                    style={{
+                      borderTop: "1px solid #e4ead9",
+                      paddingTop: 12
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        flexWrap: "wrap",
+                        alignItems: "center"
+                      }}
+                    >
+                      <strong style={{ fontSize: 18 }}>
+                        {snapshot.source_version ?? `snapshot ${snapshot.id}`}
+                      </strong>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          minHeight: 28,
+                          padding: "0 10px",
+                          borderRadius: 8,
+                          border: "1px solid #d7dfc8",
+                          background: "#f7faf2",
+                          fontSize: 13
+                        }}
+                      >
+                        {snapshot.station_version_count.toLocaleString()}件
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 6, color: "#667085", fontSize: 13 }}>{snapshot.downloaded_at}</div>
+                    <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          minHeight: 28,
+                          padding: "0 10px",
+                          borderRadius: 8,
+                          border: "1px solid #b8d99b",
+                          background: "#f7fff0",
+                          color: "#43610f",
+                          fontSize: 13
+                        }}
+                      >
+                        追加 {snapshot.change_counts.created.toLocaleString()}
+                      </span>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          minHeight: 28,
+                          padding: "0 10px",
+                          borderRadius: 8,
+                          border: "1px solid #d7dfc8",
+                          background: "#f7faf2",
+                          color: "#4b5563",
+                          fontSize: 13
+                        }}
+                      >
+                        更新 {snapshot.change_counts.updated.toLocaleString()}
+                      </span>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          minHeight: 28,
+                          padding: "0 10px",
+                          borderRadius: 8,
+                          border: "1px solid #f1c36e",
+                          background: "#fff8ec",
+                          color: "#9a6700",
+                          fontSize: 13
+                        }}
+                      >
+                        削除 {snapshot.change_counts.removed.toLocaleString()}
+                      </span>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section style={panelStyle}>
+            <div style={{ fontSize: 13, color: "#667085" }}>最新差分</div>
+            <div style={{ fontSize: 20, fontWeight: 700, marginTop: 4 }}>駅名だけでなく路線の動きも追えます。</div>
+            <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+              {changes.length === 0 ? (
+                <div style={{ color: "#667085" }}>差分はまだありません。</div>
+              ) : (
+                changes.map((change) => {
+                  const palette = changeKindPalette(change.change_kind);
+                  const changedFields = (change.detail.changed_fields ?? []).slice(0, 4);
+
+                  return (
+                    <article
+                      key={change.id}
+                      style={{
+                        borderTop: "1px solid #e4ead9",
+                        paddingTop: 12
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          flexWrap: "wrap",
+                          alignItems: "flex-start"
+                        }}
+                      >
+                        <div>
+                          <strong style={{ display: "block", fontSize: 18 }}>
+                            {change.station_name ?? change.station_uid}
+                          </strong>
+                          <div style={{ marginTop: 4, color: "#4b5563" }}>
+                            {[change.line_name, change.operator_name].filter(Boolean).join(" / ") || "駅情報"}
+                          </div>
+                        </div>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            minHeight: 28,
+                            padding: "0 10px",
+                            borderRadius: 8,
+                            fontSize: 13,
+                            ...palette
+                          }}
+                        >
+                          {changeKindLabel(change.change_kind)}
+                        </span>
+                      </div>
+                      <div style={{ marginTop: 6, color: "#667085", fontSize: 13 }}>
+                        {change.source_version ?? `snapshot ${change.snapshot_id}`} / {change.created_at}
+                      </div>
+                      {changedFields.length > 0 ? (
+                        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {changedFields.map((field) => (
+                            <span
+                              key={`${change.id}-${field}`}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                minHeight: 28,
+                                padding: "0 10px",
+                                borderRadius: 8,
+                                border: "1px solid #d7dfc8",
+                                background: "#f7faf2",
+                                color: "#4b5563",
+                                fontSize: 13
+                              }}
+                            >
+                              {field}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })
+              )}
+            </div>
+          </section>
         </div>
       ) : null}
     </section>

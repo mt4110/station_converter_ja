@@ -2,13 +2,13 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import {
-  getDatasetStatus,
   searchStations,
-  type DatasetStatus,
   type StationSearchResponse
 } from "../../../src/lib/station-sdk";
+import { useDatasetOverview } from "../../../src/lib/use-dataset-overview";
 import {
   DatasetBanner,
+  DatasetHistoryPanels,
   ExamplePage,
   ResultSummary,
   SearchBand,
@@ -19,23 +19,10 @@ import {
 export default function StationSearchPage() {
   const [query, setQuery] = useState("新宿");
   const [result, setResult] = useState<StationSearchResponse | null>(null);
-  const [dataset, setDataset] = useState<DatasetStatus | null>(null);
   const [loading, setLoading] = useState(false);
-  const [datasetLoading, setDatasetLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const datasetReady = dataset?.can_query_stations ?? false;
-
-  async function loadDataset() {
-    setDatasetLoading(true);
-
-    try {
-      setDataset(await getDatasetStatus());
-    } catch {
-      setDataset(null);
-    } finally {
-      setDatasetLoading(false);
-    }
-  }
+  const { dataset, datasetLoading, datasetReady, snapshots, changes, historyLoading, historyError } =
+    useDatasetOverview();
 
   async function runSearch(nextQuery: string) {
     setLoading(true);
@@ -60,10 +47,6 @@ export default function StationSearchPage() {
   }
 
   useEffect(() => {
-    void loadDataset();
-  }, []);
-
-  useEffect(() => {
     if (!datasetReady) {
       setResult(null);
       return;
@@ -82,6 +65,13 @@ export default function StationSearchPage() {
       }}
     >
       <DatasetBanner dataset={dataset} loading={datasetLoading} />
+      <DatasetHistoryPanels
+        dataset={dataset}
+        snapshots={snapshots}
+        changes={changes}
+        loading={historyLoading}
+        error={historyError}
+      />
       <SearchBand title="駅名から探す" detail="同名駅の路線違いも一度に出します。">
         <form onSubmit={onSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input

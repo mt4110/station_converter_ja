@@ -33,6 +33,10 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     Migrate,
+    ResetVerifyDb {
+        #[arg(long)]
+        yes: bool,
+    },
     ExportSqlite,
     ValidateIngest(ValidateIngestArgs),
     Job {
@@ -68,6 +72,7 @@ async fn run() -> Result<ExitCode> {
 
     match cli.command {
         Commands::Migrate => migrate(&config).await?,
+        Commands::ResetVerifyDb { yes } => reset_verify_db(&config, yes).await?,
         Commands::ExportSqlite => {
             // Export shares the ingest lock so SQLite snapshots never race a live ingest.
             let _lock = acquire_job_lock(
@@ -117,6 +122,47 @@ async fn migrate(config: &AppConfig) -> Result<()> {
     }
 
     info!("migrations complete for {}", config.database_type);
+    Ok(())
+}
+
+async fn reset_verify_db(config: &AppConfig, yes: bool) -> Result<()> {
+    if !yes {
+        bail!("reset-verify-db is destructive; re-run with --yes");
+    }
+
+    match config.database_type {
+        DatabaseType::Postgres => {
+            let pool = PgPoolOptions::new().connect(&config.database_url).await?;
+            sqlx::query(
+                "TRUNCATE TABLE
+                   station_change_events,
+                   station_versions,
+                   station_identities,
+                   source_snapshots
+                 RESTART IDENTITY CASCADE",
+            )
+            .execute(&pool)
+            .await?;
+        }
+        DatabaseType::Mysql => {
+            let pool = MySqlPoolOptions::new()
+                .connect(&config.database_url)
+                .await?;
+            for statement in [
+                "DELETE FROM station_change_events",
+                "DELETE FROM station_versions",
+                "DELETE FROM station_identities",
+                "DELETE FROM source_snapshots",
+            ] {
+                sqlx::query(statement).execute(&pool).await?;
+            }
+        }
+        DatabaseType::Sqlite => {
+            bail!("reset-verify-db is only supported for postgres or mysql");
+        }
+    }
+
+    info!("verification database reset for {}", config.database_type);
     Ok(())
 }
 

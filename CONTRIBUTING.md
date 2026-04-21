@@ -32,11 +32,16 @@ cargo run -p station-ops -- validate-ingest --strict --json
 cd frontend && npm ci && npm run build
 ```
 
+`./scripts/verify_repo.sh` は Rust 側の verify に加えて
+`frontend` の `npm run verify:station-sdk` も実行し、
+OpenAPI 変更時に generated SDK / 型定義の取りこぼしを検出します。
+
 ## What to update with your change
 
 - runtime / operational behavior を変えたら `README.md` と該当 docs を更新する
 - public API を変えたら `API_SPEC.md` を更新する
 - OpenAPI 導入後は generated OpenAPI も必ず同期する
+- OpenAPI / API contract の設計方針は `docs/OPENAPI.md` を参照する
 - release artifact の中身を変えたら `docs/RELEASE.md` と `docs/ROADMAP.md` を見直す
 - source / license policy を変えたら `docs/SOURCE_POLICY.md` を更新する
 
@@ -46,4 +51,3 @@ cd frontend && npm ci && npm run build
 - docs の導線が壊れていないこと
 - `N02` canonical / `N05` optional non-commercial overlay の線引きを崩していないこと
 - PostgreSQL / MySQL が primary write、SQLite が read-only artifact という前提を崩していないこと
-

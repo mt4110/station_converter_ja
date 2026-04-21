@@ -1,6 +1,6 @@
 # ROADMAP
 
-## 2026-04-20 時点の整理
+## 2026-04-21 時点の整理
 
 PR #2 までで、この repo はもう空箱ではありません。
 `station-ops job ingest-n02` による ingest、`validate-ingest`、SQLite export、`station-api`、
@@ -12,7 +12,7 @@ example frontend、self-hosted の運用導線まで揃っています。
 ## 結論: 次はこの順番
 
 1. Release と配布物の信頼性を完成させる
-2. OpenAPI を production-ready にする
+2. OpenAPI contract の仕上げをする
 3. ingest 速度ではなく、検知 -> 公開速度を上げる
 4. データ品質ゲートを product-grade にする
 5. README から迷わず辿れる docs 導線を作る
@@ -62,41 +62,41 @@ example frontend、self-hosted の運用導線まで揃っています。
 **verified な `v0.1.0` tag を載せ替えない**でください。
 この repo では patch tag を増やす方が正しいです。
 
-## 2. OpenAPI を production-ready にする
+## 2. OpenAPI contract の仕上げをする
 
 ### いま出来ていること
 
-- [`API_SPEC.md`](../API_SPEC.md) はある
-- `station-api` には次の実 endpoint がある
+- `worker/api` の route / DTO から OpenAPI JSON を自動生成できる
+- `/openapi.json` と `/docs` を公開している
+- `station-api` の current public API が contract に載っている
   - `/health`
   - `/ready`
   - `/v1/dataset/status`
+  - `/v1/dataset/snapshots`
+  - `/v1/dataset/changes`
   - `/v1/stations/search`
   - `/v1/stations/nearby`
   - `/v1/lines/catalog`
   - `/v1/lines/{line_name}/stations`
   - `/v1/operators/{operator_name}/stations`
+- `frontend/scripts/generate-station-sdk.mjs` で同じ contract から TypeScript SDK / 型定義を再生成できる
+- `./scripts/verify_repo.sh` と `worker/api` の contract test で `/openapi.json` / `/docs` / 主要 path を確認している
 
-### まだ足りないこと
+### まだ残る polish
 
-- Rust handler / response type から OpenAPI JSON を自動生成する
-- `/openapi.json` を出す
-- `/docs` に Swagger UI, Scalar, Redoc のいずれかを載せる
-- response schema を Rust 型と同期させる
-- example request / response を固定する
-- error response 仕様を統一する
-- versioning policy を明記する
-- `API_SPEC.md` を generated OpenAPI と同じ契約面へ寄せる
+- [`API_SPEC.md`](../API_SPEC.md) を generated OpenAPI と継続同期する
+- `/v1/dataset/snapshots` と `/v1/dataset/changes` の利用者向け説明 / sample を磨く
+- error response を `code` / `message` から先へ広げるなら `detail` の標準形を決める
+- `/api/address-search` のような frontend-local helper が OpenAPI 外であることを docs に明示する
+- versioning policy と public API change 時の更新手順を contributor docs / PR checklist に固定する
 
-### 次の API product gap
+### 次の contract gap
 
-`/v1/dataset/status` は既にあります。
-その次に価値が高いのは次です。
+OpenAPI 自体を「入れること」は終わりました。
+ここから効くのは endpoint 追加より、**contract を読み違えない状態に寄せること**です。
 
-- `/v1/dataset/snapshots`
-- `/v1/dataset/changes`
-
-利用者が「いつのデータか」「何が変わったか」を API で追えるようにするのが狙いです。
+- snapshots / changes を見れば「いつのデータか」「何が変わったか」が追える
+- だから次は、その shape と error semantics をぶらさない方が価値が高い
 
 ## 3. ingest 速度ではなく、検知 -> 公開速度を上げる
 
@@ -202,22 +202,23 @@ README から次へは辿れます。
 
 ### docs backlog
 
-- `docs/INDEX.md`
-- `docs/QUICKSTART_SQLITE.md`
-- `docs/QUICKSTART_API.md`
-- `docs/DATA_FRESHNESS.md`
-- `docs/DATA_LICENSE.md`
-- `docs/DATA_QUALITY.md`
-- `docs/API.md`
-- `docs/OPENAPI.md`
-- `docs/ARTIFACTS.md`
-- `docs/OBSERVABILITY.md`
-- `docs/REDIS_CACHE.md`
-- `docs/FAQ.md`
+- [ ] `docs/INDEX.md`
+- [ ] `docs/QUICKSTART_SQLITE.md`
+- [ ] `docs/QUICKSTART_API.md`
+- [ ] `docs/DATA_FRESHNESS.md`
+- [x] `docs/SOURCE_POLICY.md` (current source / license entrypoint)
+- [ ] `docs/DATA_QUALITY.md`
+- [ ] `docs/API.md`
+- [x] `docs/OPENAPI.md`
+- [x] `docs/ARTIFACTS.md`
+- [ ] `docs/OBSERVABILITY.md`
+- [ ] `docs/REDIS_CACHE.md`
+- [ ] `docs/FAQ.md`
 
-特に `DATA_LICENSE.md` は優先度が高いです。
+特に source / license policy は優先度が高いです。
+現状は [`docs/SOURCE_POLICY.md`](./SOURCE_POLICY.md) がその役割を担っています。
 canonical source が `N02`、`N05` は optional non-commercial overlay という線を、
-README からすぐ辿れる形にする必要があります。
+README からすぐ辿れる形に保ちます。
 
 ## いまやらない方がいいこと
 
@@ -251,14 +252,21 @@ canonical export に急いで混ぜないこと。
 - `docs/ARTIFACTS.md`
 - `docs/DATA_LICENSE.md`
 
-### v0.2.0: API contract
+### v0.2.0: API contract first pass
 
-- OpenAPI
-- `/docs`
-- API contract tests
-- unified error model
-- API versioning policy
-- TypeScript client generation
+- [x] OpenAPI
+- [x] `/docs`
+- [x] API contract tests
+- [x] base error envelope
+- [x] TypeScript client generation
+
+### v0.2.x: contract polish
+
+- `API_SPEC.md` sync
+- snapshots / changes docs
+- error detail standardization
+- hand-written frontend helper docs
+- contributor / PR update path
 
 ### v0.3.0: trust package
 
@@ -274,8 +282,7 @@ canonical export に急いで混ぜないこと。
 
 - `/metrics`
 - source freshness watcher
-- dataset snapshots API
-- dataset changes API
+- publish pipeline
 - cache invalidation by dataset revision
 - systemd production hardening
 

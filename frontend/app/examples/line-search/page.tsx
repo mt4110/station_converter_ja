@@ -2,16 +2,16 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
-  getDatasetStatus,
   listLineCatalog,
   listLineStations,
   type LineCatalogEntry,
   type LineCatalogResponse,
-  type DatasetStatus,
   type LineStationsResponse
 } from "../../../src/lib/station-sdk";
+import { useDatasetOverview } from "../../../src/lib/use-dataset-overview";
 import {
   DatasetBanner,
+  DatasetHistoryPanels,
   ExamplePage,
   ResultSummary,
   SearchBand,
@@ -42,16 +42,15 @@ export default function LineSearchPage() {
   const [lineName, setLineName] = useState("山手線");
   const [result, setResult] = useState<LineStationsResponse | null>(null);
   const [selectedCatalogEntry, setSelectedCatalogEntry] = useState<LineCatalogEntry | null>(null);
-  const [dataset, setDataset] = useState<DatasetStatus | null>(null);
   const [loading, setLoading] = useState(false);
-  const [datasetLoading, setDatasetLoading] = useState(true);
   const [catalog, setCatalog] = useState<LineCatalogResponse | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [helperMode, setHelperMode] = useState<HelperMode>("line");
   const [selectedArea, setSelectedArea] = useState<(typeof lineAreas)[number]["id"]>("kanto");
-  const datasetReady = dataset?.can_query_stations ?? false;
+  const { dataset, datasetLoading, datasetReady, snapshots, changes, historyLoading, historyError } =
+    useDatasetOverview();
   const areaLines = lineAreas.find((area) => area.id === selectedArea)?.lines ?? [];
   const catalogEntries = catalog?.items ?? [];
 
@@ -71,18 +70,6 @@ export default function LineSearchPage() {
       items: baseEntries.slice(0, 24)
     };
   }, [areaLines, catalogEntries, helperMode, lineName]);
-
-  async function loadDataset() {
-    setDatasetLoading(true);
-
-    try {
-      setDataset(await getDatasetStatus());
-    } catch {
-      setDataset(null);
-    } finally {
-      setDatasetLoading(false);
-    }
-  }
 
   async function loadCatalog() {
     setCatalogLoading(true);
@@ -131,10 +118,6 @@ export default function LineSearchPage() {
   }
 
   useEffect(() => {
-    void loadDataset();
-  }, []);
-
-  useEffect(() => {
     if (!datasetReady) {
       setResult(null);
       setCatalog(null);
@@ -161,6 +144,13 @@ export default function LineSearchPage() {
       }}
     >
       <DatasetBanner dataset={dataset} loading={datasetLoading} />
+      <DatasetHistoryPanels
+        dataset={dataset}
+        snapshots={snapshots}
+        changes={changes}
+        loading={historyLoading}
+        error={historyError}
+      />
       <SearchBand title="路線から探す" detail="思い出せないときは、エリアから代表路線をたどれます。">
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           <button

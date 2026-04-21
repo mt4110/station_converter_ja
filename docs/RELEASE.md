@@ -113,3 +113,5 @@ cd frontend && npm ci && npm run build
 
 `verify_ingest_export.sh` は repo 内の小さな N02 fixture を ZIP 化して使うので、
 外部 upstream に依存せず `migrate -> ingest -> export` を再現できます。
+`verify_repo.sh` は Rust 側の verify に加えて、OpenAPI から再生成される
+frontend の station SDK / 型定義の freshness も確認します。
