@@ -232,10 +232,37 @@ SQLite artifact を配布物として固める:
 GitHub Release までまとめて公開する:
 
 ```bash
-./scripts/publish_sqlite_release.sh postgres v0.1.1
+./scripts/publish_sqlite_release.sh postgres v0.1.4
 ```
 
-配布物は `artifacts/sqlite/` に出力されます。
+配布物は `artifacts/sqlite/` に出力されます。公開済み tag は載せ替えず、
+次の patch tag で進めます。上の例は、最新 tag が `v0.1.3` の状態から
+`v0.1.4` を切る想定です。
+
+公開済み release を利用者側で検証する最短経路:
+
+```bash
+REPO=mt4110/station_converter_ja
+TAG=v0.1.4
+mkdir -p "tmp/release-${TAG}"
+gh release download "$TAG" -R "$REPO" -D "tmp/release-${TAG}" --clobber \
+  -p stations.sqlite3 \
+  -p manifest.json \
+  -p SOURCE_METADATA.json \
+  -p checksums.txt \
+  -p CHANGELOG.md \
+  -p RELEASE_NOTES.md \
+  -p README_SQLITE.md \
+  -p SBOM.spdx.json
+cd "tmp/release-${TAG}"
+shasum -a 256 -c checksums.txt
+gh attestation verify stations.sqlite3 -R "$REPO"
+gh attestation verify stations.sqlite3 -R "$REPO" \
+  --predicate-type https://spdx.dev/Document/v2.3
+```
+
+この artifact の freshness は latest available MLIT N02 snapshot までであり、
+real-time railway data ではありません。
 
 ## Docs
 

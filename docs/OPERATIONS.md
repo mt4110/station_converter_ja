@@ -151,7 +151,7 @@ MySQL を primary write にしている場合:
 GitHub Release まで載せる場合:
 
 ```bash
-./scripts/publish_sqlite_release.sh postgres v0.1.1
+./scripts/publish_sqlite_release.sh postgres v0.1.4
 ```
 
 生成される bundle の中身と検証方法は [`docs/ARTIFACTS.md`](./ARTIFACTS.md) を参照してください。

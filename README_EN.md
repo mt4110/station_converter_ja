@@ -136,10 +136,37 @@ Build a distributable SQLite bundle:
 Publish the SQLite bundle to a GitHub Release:
 
 ```bash
-./scripts/publish_sqlite_release.sh postgres v0.1.1
+./scripts/publish_sqlite_release.sh postgres v0.1.4
 ```
 
-Outputs are written to `artifacts/sqlite/`.
+Outputs are written to `artifacts/sqlite/`. Do not move an already published tag;
+publish the hardened assets with a new patch tag. This example assumes `v0.1.3`
+is currently the latest tag and the next patch tag is `v0.1.4`.
+
+Fast consumer-side verification for a published release:
+
+```bash
+REPO=mt4110/station_converter_ja
+TAG=v0.1.4
+mkdir -p "tmp/release-${TAG}"
+gh release download "$TAG" -R "$REPO" -D "tmp/release-${TAG}" --clobber \
+  -p stations.sqlite3 \
+  -p manifest.json \
+  -p SOURCE_METADATA.json \
+  -p checksums.txt \
+  -p CHANGELOG.md \
+  -p RELEASE_NOTES.md \
+  -p README_SQLITE.md \
+  -p SBOM.spdx.json
+cd "tmp/release-${TAG}"
+shasum -a 256 -c checksums.txt
+gh attestation verify stations.sqlite3 -R "$REPO"
+gh attestation verify stations.sqlite3 -R "$REPO" \
+  --predicate-type https://spdx.dev/Document/v2.3
+```
+
+The artifact freshness claim is limited to the latest available MLIT N02 snapshot;
+it is not real-time railway data.
 
 ## Docs
 
