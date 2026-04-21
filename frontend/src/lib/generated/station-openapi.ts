@@ -177,7 +177,9 @@ export interface components {
          *     }
          */
         ApiErrorDetailDto: {
+            /** @description Stable machine-readable error code. */
             code: components["schemas"]["ApiErrorCode"];
+            /** @description Human-readable error message. */
             message: string;
         };
         /**
@@ -215,13 +217,53 @@ export interface components {
          *     }
          */
         DatasetChangeDetailDto: {
-            after?: null | components["schemas"]["DatasetChangeVersionRefDto"];
-            before?: null | components["schemas"]["DatasetChangeVersionRefDto"];
+            /** @description New station version context for `updated` events when available. */
+            after?: null | {
+                /** @description Line name from the referenced station version. */
+                line_name?: string | null;
+                /** @description Operator name from the referenced station version. */
+                operator_name?: string | null;
+                /** @description MLIT group code when available. */
+                source_group_code?: string | null;
+                /** @description MLIT station code when available. */
+                source_station_code?: string | null;
+                /** @description Station name from the referenced station version. */
+                station_name?: string | null;
+                /**
+                 * @description Status from the referenced station version; current ingest persists this as `active`.
+                 *     Removals are represented by the surrounding dataset change metadata, not by this field.
+                 */
+                status?: string | null;
+            };
+            /** @description Previous station version context for `updated` events when available. */
+            before?: null | {
+                /** @description Line name from the referenced station version. */
+                line_name?: string | null;
+                /** @description Operator name from the referenced station version. */
+                operator_name?: string | null;
+                /** @description MLIT group code when available. */
+                source_group_code?: string | null;
+                /** @description MLIT station code when available. */
+                source_station_code?: string | null;
+                /** @description Station name from the referenced station version. */
+                station_name?: string | null;
+                /**
+                 * @description Status from the referenced station version; current ingest persists this as `active`.
+                 *     Removals are represented by the surrounding dataset change metadata, not by this field.
+                 */
+                status?: string | null;
+            };
+            /** @description Field names that changed for an `updated` event. */
             changed_fields?: string[];
+            /** @description Flat line name context used by `created` and `removed` events. */
             line_name?: string | null;
+            /** @description Flat operator name context used by `created` and `removed` events. */
             operator_name?: string | null;
+            /** @description Flat MLIT group code context used by `created` and `removed` events. */
             source_group_code?: string | null;
+            /** @description Flat MLIT station code context used by `created` and `removed` events. */
             source_station_code?: string | null;
+            /** @description Flat station name context used by `created` and `removed` events. */
             station_name?: string | null;
         };
         /**
@@ -261,21 +303,41 @@ export interface components {
          *     }
          */
         DatasetChangeEventDto: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description New station version id for `created` and `updated` events.
+             */
             after_version_id?: number | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Previous station version id for `updated` and `removed` events.
+             */
             before_version_id?: number | null;
+            /** @description Type of change recorded for the station identity. */
             change_kind: components["schemas"]["DatasetChangeKindDto"];
+            /** @description Change event creation timestamp string emitted by the active database dialect. */
             created_at: string;
+            /** @description Structured before/after context for consumers that need field-level diffs. */
             detail: components["schemas"]["DatasetChangeDetailDto"];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Internal change event id, ordered newest first by this endpoint.
+             */
             id: number;
+            /** @description Best available line name context from the before or after version. */
             line_name?: string | null;
+            /** @description Best available operator name context from the before or after version. */
             operator_name?: string | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Source snapshot id that produced this change.
+             */
             snapshot_id: number;
+            /** @description MLIT source version associated with the source snapshot when available. */
             source_version?: string | null;
+            /** @description Best available station name context from the before or after version. */
             station_name?: string | null;
+            /** @description Stable station identity used by this dataset. */
             station_uid: string;
         };
         /** @enum {string} */
@@ -291,11 +353,20 @@ export interface components {
          *     }
          */
         DatasetChangeVersionRefDto: {
+            /** @description Line name from the referenced station version. */
             line_name?: string | null;
+            /** @description Operator name from the referenced station version. */
             operator_name?: string | null;
+            /** @description MLIT group code when available. */
             source_group_code?: string | null;
+            /** @description MLIT station code when available. */
             source_station_code?: string | null;
+            /** @description Station name from the referenced station version. */
             station_name?: string | null;
+            /**
+             * @description Status from the referenced station version; current ingest persists this as `active`.
+             *     Removals are represented by the surrounding dataset change metadata, not by this field.
+             */
             status?: string | null;
         };
         /**
@@ -341,10 +412,17 @@ export interface components {
          *     }
          */
         DatasetChangesResponseDto: {
+            /** @description Change events ordered newest first. */
             items: components["schemas"]["DatasetChangeEventDto"][];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Normalized response limit.
+             */
             limit: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Echoes the requested snapshot filter, or null when no filter was used.
+             */
             snapshot_id?: number | null;
         };
         /**
@@ -356,13 +434,25 @@ export interface components {
          *     }
          */
         DatasetSnapshotChangeCountsDto: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Number of station identities created by this source snapshot.
+             */
             created: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Number of station identities removed by this source snapshot.
+             */
             removed: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Sum of created, updated, and removed change events.
+             */
             total: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Number of station identities updated by this source snapshot.
+             */
             updated: number;
         };
         /**
@@ -377,23 +467,36 @@ export interface components {
          *       "id": 25,
          *       "source_kind": "geojson_zip_entry",
          *       "source_name": "ksj_n02_station",
-         *       "source_sha256": "sha-25",
+         *       "source_sha256": "84d675d10bfe01b7fdcbe97cf9221c0b5054d5833cf9a339b37e8b82ac3bd5aa",
          *       "source_url": "https://example.com/N02-25_GML.zip",
          *       "source_version": "N02-25",
          *       "station_version_count": 10155
          *     }
          */
         DatasetSnapshotDto: {
+            /** @description Change event counts scoped to N02 station identities. */
             change_counts: components["schemas"]["DatasetSnapshotChangeCountsDto"];
+            /** @description Snapshot download or load timestamp string emitted by the active database dialect. */
             downloaded_at: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Internal source snapshot id. Use this as `snapshot_id` for `/v1/dataset/changes`.
+             */
             id: number;
+            /** @description Stored source format for the snapshot. */
             source_kind: string;
+            /** @description Canonical source name. N02 station snapshots use `ksj_n02_station`. */
             source_name: string;
+            /** @description SHA-256 digest of the ingested source package. */
             source_sha256: string;
+            /** @description Original source URL or local fixture URL used for ingest. */
             source_url: string;
+            /** @description MLIT source version when it can be derived from the source package. */
             source_version?: string | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Number of N02 station versions attached to this snapshot.
+             */
             station_version_count: number;
         };
         /**
@@ -423,7 +526,7 @@ export interface components {
          *           "id": 25,
          *           "source_kind": "geojson_zip_entry",
          *           "source_name": "ksj_n02_station",
-         *           "source_sha256": "sha-25",
+         *           "source_sha256": "84d675d10bfe01b7fdcbe97cf9221c0b5054d5833cf9a339b37e8b82ac3bd5aa",
          *           "source_url": "https://example.com/N02-25_GML.zip",
          *           "source_version": "N02-25",
          *           "station_version_count": 10155
@@ -433,8 +536,12 @@ export interface components {
          *     }
          */
         DatasetSnapshotsResponseDto: {
+            /** @description Source snapshots ordered newest first. */
             items: components["schemas"]["DatasetSnapshotDto"][];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Normalized response limit.
+             */
             limit: number;
         };
         /**
@@ -707,9 +814,15 @@ export interface operations {
     dataset_changes: {
         parameters: {
             query?: {
-                /** @example 25 */
+                /**
+                 * @description Optional source snapshot id to filter change events.
+                 * @example 25
+                 */
                 snapshot_id?: number;
-                /** @example 20 */
+                /**
+                 * @description Maximum number of recent N02 change events to return.
+                 * @example 20
+                 */
                 limit?: number;
             };
             header?: never;
@@ -759,7 +872,10 @@ export interface operations {
     dataset_snapshots: {
         parameters: {
             query?: {
-                /** @example 20 */
+                /**
+                 * @description Maximum number of recent N02 source snapshots to return.
+                 * @example 20
+                 */
                 limit?: number;
             };
             header?: never;
