@@ -3,8 +3,13 @@ pub mod n02;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use sqlx::AnyPool;
-use station_shared::{config::AppConfig, db::SqlDialect};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use sqlx::{AnyPool, Row};
+use station_shared::{
+    config::AppConfig,
+    db::{decode_optional_string, decode_required_string, SqlDialect},
+};
 use tracing::info;
 
 pub use n02::{IngestReport, PersistChunkConfig};
@@ -12,6 +17,23 @@ pub use n02::{IngestReport, PersistChunkConfig};
 pub const DEFAULT_SOURCE_SNAPSHOT_URL: &str =
     "https://nlftp.mlit.go.jp/ksj/gml/data/N02/N02-24/N02-24_GML.zip";
 pub const N02_INGEST_LOCK_NAME: &str = "ingest-n02";
+const N02_SOURCE_NAME: &str = "ksj_n02_station";
+
+#[derive(Debug, Serialize)]
+pub struct SourceFreshnessReport {
+    pub source_name: &'static str,
+    pub source_url: String,
+    pub source_sha256: String,
+    pub latest_snapshot_id: Option<i64>,
+    pub latest_source_version: Option<String>,
+    pub latest_source_sha256: Option<String>,
+    pub changed: bool,
+    pub ingested: bool,
+    pub load_ms: u64,
+    pub total_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingest_report: Option<IngestReport>,
+}
 
 pub async fn run_n02_ingest_cycle(
     config: &AppConfig,
@@ -62,12 +84,133 @@ pub async fn run_n02_ingest_cycle(
     Ok(report)
 }
 
+pub async fn refresh_n02_source(
+    config: &AppConfig,
+    pool: &AnyPool,
+    dialect: SqlDialect,
+    ingest_changed: bool,
+) -> Result<SourceFreshnessReport> {
+    let total_start = Instant::now();
+    let source_url = n02_source_url(config);
+    ensure_source_url_allowed(source_url, config)?;
+    tokio::fs::create_dir_all(&config.temp_asset_dir).await?;
+
+    let load_start = Instant::now();
+    let bytes = load_snapshot_bytes(source_url).await?;
+    let load_ms = duration_ms(load_start.elapsed());
+    let source_sha256 = sha256_hex(&bytes);
+    let latest = fetch_latest_n02_snapshot(pool, dialect).await?;
+    let changed = latest
+        .as_ref()
+        .is_none_or(|snapshot| snapshot.source_sha256 != source_sha256);
+
+    let ingest_report = if changed && ingest_changed {
+        let (output_path, save_zip_ms) = save_loaded_snapshot(config, &bytes).await?;
+        let mut report = n02::ingest_snapshot_with_config(
+            pool,
+            dialect,
+            source_url,
+            &output_path,
+            bytes.as_ref(),
+            PersistChunkConfig {
+                write_chunk_size: config.ingest_write_chunk_size,
+                close_chunk_size: config.ingest_close_chunk_size,
+            },
+        )
+        .await?;
+        report.load_ms = load_ms;
+        report.save_zip_ms = save_zip_ms;
+        report.total_ms = duration_ms(total_start.elapsed());
+        Some(report)
+    } else {
+        None
+    };
+
+    Ok(SourceFreshnessReport {
+        source_name: N02_SOURCE_NAME,
+        source_url: source_url.to_string(),
+        source_sha256,
+        latest_snapshot_id: latest.as_ref().map(|snapshot| snapshot.id),
+        latest_source_version: latest
+            .as_ref()
+            .and_then(|snapshot| snapshot.source_version.clone()),
+        latest_source_sha256: latest.map(|snapshot| snapshot.source_sha256),
+        changed,
+        ingested: ingest_report.is_some(),
+        load_ms,
+        total_ms: duration_ms(total_start.elapsed()),
+        ingest_report,
+    })
+}
+
+fn n02_source_url(config: &AppConfig) -> &str {
+    config
+        .source_snapshot_url
+        .as_deref()
+        .unwrap_or(DEFAULT_SOURCE_SNAPSHOT_URL)
+}
+
+fn ensure_source_url_allowed(source_url: &str, config: &AppConfig) -> Result<()> {
+    if !is_remote_snapshot_url(source_url) && !config.allow_local_source_snapshot {
+        bail!(
+            "local snapshot URLs are disabled by default; set ALLOW_LOCAL_SOURCE_SNAPSHOT=true when you intentionally want fixture/file ingest"
+        );
+    }
+
+    Ok(())
+}
+
+async fn save_loaded_snapshot(config: &AppConfig, bytes: &[u8]) -> Result<(String, u64)> {
+    let filename = format!("snapshot-{}.zip", chrono::Utc::now().format("%Y%m%d%H%M%S"));
+    let output_path = format!("{}/{}", config.temp_asset_dir, filename);
+    let save_start = Instant::now();
+    tokio::fs::write(&output_path, bytes).await?;
+    Ok((output_path, duration_ms(save_start.elapsed())))
+}
+
+#[derive(Debug)]
+struct LatestN02Snapshot {
+    id: i64,
+    source_version: Option<String>,
+    source_sha256: String,
+}
+
+async fn fetch_latest_n02_snapshot(
+    pool: &AnyPool,
+    dialect: SqlDialect,
+) -> Result<Option<LatestN02Snapshot>> {
+    let row = sqlx::query(&dialect.statement(
+        "SELECT id, source_version, source_sha256
+         FROM source_snapshots
+         WHERE source_name = ?
+         ORDER BY id DESC
+         LIMIT 1",
+    ))
+    .bind(N02_SOURCE_NAME)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(|row| {
+        Ok(LatestN02Snapshot {
+            id: row.try_get("id")?,
+            source_version: decode_optional_string(&row, "source_version")?,
+            source_sha256: decode_required_string(&row, "source_sha256")?,
+        })
+    })
+    .transpose()
+}
+
 fn is_remote_snapshot_url(url: &str) -> bool {
     let Some((scheme, _)) = url.split_once("://") else {
         return false;
     };
 
     scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    format!("{digest:x}")
 }
 
 async fn load_snapshot_bytes(source_url: &str) -> Result<Vec<u8>> {
@@ -144,6 +287,49 @@ mod tests {
         assert_eq!(report.created, 2);
         assert!(output_dir.exists());
         assert_full_cycle_phase_timings_are_sane(&report);
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[tokio::test]
+    async fn refresh_n02_source_skips_unchanged_snapshot() {
+        let pool = test_pool().await;
+        let test_dir = unique_test_dir("station-crawler-refresh");
+        let output_dir = test_dir.join("output");
+        let snapshot_path = test_dir.join("fixtures").join("N02-24_GML.zip");
+
+        std::fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
+        std::fs::write(&snapshot_path, snapshot_zip_bytes(sample_geojson())).unwrap();
+
+        let config = AppConfig {
+            service_name: "station-crawler".to_string(),
+            bind_addr: "127.0.0.1:0".to_string(),
+            database_type: DatabaseType::Sqlite,
+            database_url: "sqlite::memory:".to_string(),
+            job_lock_dir: test_dir.join("locks").display().to_string(),
+            redis_url: None,
+            ready_require_cache: false,
+            update_interval_seconds: 60,
+            source_snapshot_url: Some(format!("file://{}", snapshot_path.display())),
+            allow_local_source_snapshot: true,
+            temp_asset_dir: output_dir.display().to_string(),
+            ingest_write_chunk_size: 1000,
+            ingest_close_chunk_size: 1000,
+        };
+
+        let first = refresh_n02_source(&config, &pool, SqlDialect::Sqlite, true)
+            .await
+            .unwrap();
+        let second = refresh_n02_source(&config, &pool, SqlDialect::Sqlite, true)
+            .await
+            .unwrap();
+
+        assert!(first.changed);
+        assert!(first.ingested);
+        assert!(first.ingest_report.is_some());
+        assert!(!second.changed);
+        assert!(!second.ingested);
+        assert!(second.ingest_report.is_none());
 
         let _ = std::fs::remove_dir_all(&test_dir);
     }

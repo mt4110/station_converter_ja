@@ -58,7 +58,13 @@ import type { components, paths } from "./generated/station-openapi";
 const baseUrl = process.env.NEXT_PUBLIC_STATION_API_BASE_URL ?? "http://localhost:3212";
 const client = createClient<paths>({ baseUrl });
 
-type ApiErrorEnvelope = { error?: { code?: string; message?: string } };
+type ApiErrorEnvelope = {
+  error?: {
+    code?: string;
+    message?: string;
+    detail?: components["schemas"]["ApiErrorDetailPayloadDto"];
+  };
+};
 
 function extractApiErrorMessage(error: unknown) {
   if (!error || typeof error !== "object") {
@@ -69,15 +75,40 @@ function extractApiErrorMessage(error: unknown) {
   return typeof envelope.error?.message === "string" ? envelope.error.message : null;
 }
 
+function extractApiErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const envelope = error as ApiErrorEnvelope;
+  return typeof envelope.error?.code === "string" ? envelope.error.code : null;
+}
+
+function extractApiErrorDetail(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const envelope = error as ApiErrorEnvelope;
+  return envelope.error?.detail ?? null;
+}
+
 export class ApiError extends Error {
   status: number;
   code: string | null;
+  detail: components["schemas"]["ApiErrorDetailPayloadDto"] | null;
 
-  constructor(status: number, message?: string | null, code?: string | null) {
+  constructor(
+    status: number,
+    message?: string | null,
+    code?: string | null,
+    detail?: components["schemas"]["ApiErrorDetailPayloadDto"] | null
+  ) {
     super(message ?? \`API request failed: \${status}\`);
     this.name = "ApiError";
     this.status = status;
     this.code = code ?? null;
+    this.detail = detail ?? null;
   }
 }
 
@@ -89,14 +120,10 @@ async function expectData<T>(request: Promise<{ data?: T; error?: unknown; respo
   }
 
   const message = extractApiErrorMessage(error);
-  const code =
-    error && typeof error === "object" && "error" in error && error.error && typeof error.error === "object" && "code" in error.error
-      ? typeof error.error.code === "string"
-        ? error.error.code
-        : null
-      : null;
+  const code = extractApiErrorCode(error);
+  const detail = extractApiErrorDetail(error);
 
-  throw new ApiError(response.status, message, code);
+  throw new ApiError(response.status, message, code, detail);
 }
 
 async function expectDataOrAllowedError<T>(
@@ -114,17 +141,15 @@ async function expectDataOrAllowedError<T>(
   }
 
   const message = extractApiErrorMessage(error);
-  const code =
-    error && typeof error === "object" && "error" in error && error.error && typeof error.error === "object" && "code" in error.error
-      ? typeof error.error.code === "string"
-        ? error.error.code
-        : null
-      : null;
+  const code = extractApiErrorCode(error);
+  const detail = extractApiErrorDetail(error);
 
-  throw new ApiError(response.status, message, code);
+  throw new ApiError(response.status, message, code, detail);
 }
 
 export type ApiErrorCode = components["schemas"]["ApiErrorCode"];
+export type ApiErrorIssue = components["schemas"]["ApiErrorIssueDto"];
+export type ApiErrorDetailPayload = components["schemas"]["ApiErrorDetailPayloadDto"];
 export type ApiErrorDetail = components["schemas"]["ApiErrorDetailDto"];
 export type ApiErrorResponse = components["schemas"]["ApiErrorResponseDto"];
 export type HealthResponse = components["schemas"]["HealthResponseDto"];

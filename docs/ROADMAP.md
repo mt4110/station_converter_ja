@@ -82,13 +82,13 @@ example frontend、self-hosted の運用導線まで揃っています。
 - `frontend/scripts/generate-station-sdk.mjs` で同じ contract から TypeScript SDK / 型定義を再生成できる
 - `./scripts/verify_repo.sh` と `worker/api` の contract test で `/openapi.json` / `/docs` / 主要 path を確認している
 
-### まだ残る polish
+### 現在の polish 状態
 
-- [`API_SPEC.md`](../API_SPEC.md) を generated OpenAPI と継続同期する
-- `/v1/dataset/snapshots` と `/v1/dataset/changes` の利用者向け説明 / sample を磨く
-- error response を `code` / `message` から先へ広げるなら `detail` の標準形を決める
-- `/api/address-search` のような frontend-local helper が OpenAPI 外であることを docs に明示する
-- versioning policy と public API change 時の更新手順を contributor docs / PR checklist に固定する
+- [x] [`API_SPEC.md`](../API_SPEC.md) を generated OpenAPI と同期し、human-readable companion として位置づける
+- [x] `/v1/dataset/snapshots` と `/v1/dataset/changes` の利用者向け説明 / sample を整える
+- [x] `/api/address-search` のような frontend-local helper が OpenAPI 外であることを docs と contract test に固定する
+- [x] versioning policy と public API change 時の更新手順を contributor docs に固定する
+- [x] error response は `code` / `message` に加え、optional `detail.kind` / `detail.issues[]` の標準形を持つ
 
 ### 次の contract gap
 
@@ -105,6 +105,8 @@ OpenAPI 自体を「入れること」は終わりました。
 - README baseline では local PostgreSQL fresh ingest が `total_ms=2039`
 - 以前の支配的ボトルネックだった `persist_ms` は `10091 -> 630` まで落ちている
 - same snapshot の skip path もある
+- `station-ops job refresh-n02 --check-only` で configured N02 source の SHA-256 を比較できる
+- `station-ops job refresh-n02 --export-sqlite` で changed source の ingest と SQLite export を繋げられる
 
 ### ここで勘違いしない
 
@@ -113,15 +115,20 @@ OpenAPI 自体を「入れること」は終わりました。
 
 ### 追加したい流れ
 
-`station-ops job refresh-n02` のような flow で、少なくとも次を扱えるようにする。
+`station-ops job refresh-n02` は次を扱います。
 
-1. source index を取得する
-2. `source_version` / `source_url` / `source_sha256` を比較する
-3. unchanged なら素早く終了する
-4. changed なら download / verify / parse / validate に進む
+1. configured source ZIP を取得する
+2. `source_sha256` を最新 ingested N02 snapshot と比較する
+3. unchanged なら parse / persist へ進まず終了する
+4. changed なら download / verify / parse / persist に進む
 5. persist は transaction 内だけに閉じ込める
-6. commit 後に SQLite export と release asset publish を行う
-7. `dataset_revision` 単位で cache invalidation する
+6. commit 後に SQLite export まで繋げられる
+
+今後の追加余地:
+
+- upstream index discovery
+- release asset publish までの自動 chain
+- `dataset_revision` 単位で cache invalidation する
 
 ### freshness claim の文言
 
@@ -145,15 +152,16 @@ README と docs はこの線を崩さずに書くこと。
   - out-of-range / suspicious coordinates
   - duplicate latest `station_uid`
 
-### まだ足りないこと
+### 現在の強化状態
 
-- distinct station name threshold
-- line / operator threshold を latest baseline に合わせて引き上げる
-- `station_versions` と `source_snapshots` の参照整合性チェック
-- `valid_from` / `valid_to` interval check
-- PostgreSQL / MySQL / SQLite parity check
-- artifact parity check
-- reproducibility check
+- [x] distinct station name threshold
+- [x] line threshold を latest baseline に合わせて引き上げる
+- [x] `station_versions` と `source_snapshots` / `station_identities` の参照整合性チェック
+- [x] `valid_from` / `valid_to` interval check
+- [x] operator threshold を latest baseline に合わせて引き上げる
+- [x] primary DB / SQLite artifact count parity check
+- [x] latest source digest parity check
+- [x] logical SQLite artifact reproducibility check
 
 ### strict acceptance criteria の候補
 
@@ -166,8 +174,8 @@ README と docs はこの線を崩さずに書くこと。
 - blank `station_name`, `line_name`, `operator_name` は 0
 - duplicate `station_uid` in `stations_latest` は 0
 
-`distinct_operator_count` の厳密な閾値は、最新の PostgreSQL / MySQL 実測を再採番してから固定する。
-ここは雑に hard-code しない方がよいです。
+`distinct_operator_count` は 2026-04-19 の PostgreSQL / MySQL baseline から、
+default floor を `>= 170` にしています。
 
 ### テスト / tool backlog
 
@@ -176,7 +184,7 @@ README と docs はこの線を崩さずに書くこと。
 - two-snapshot diff test
 - PostgreSQL / MySQL / SQLite parity test
 - API contract test
-- artifact reproducibility test
+- [x] artifact reproducibility test
 - `cargo nextest`
 - `cargo llvm-cov`
 - `cargo deny`
@@ -195,25 +203,24 @@ README から次へは辿れます。
 - deploy
 - source policy
 
-### まだ足りないこと
+### 現在の状態
 
-役割別の入口がありません。
-次は README と docs に「I want to...」導線を作るのが効きます。
+README と docs に「I want to...」導線が入り、役割別入口を持っています。
 
 ### docs backlog
 
-- [ ] `docs/INDEX.md`
-- [ ] `docs/QUICKSTART_SQLITE.md`
-- [ ] `docs/QUICKSTART_API.md`
-- [ ] `docs/DATA_FRESHNESS.md`
+- [x] `docs/INDEX.md`
+- [x] `docs/QUICKSTART_SQLITE.md`
+- [x] `docs/QUICKSTART_API.md`
+- [x] `docs/DATA_FRESHNESS.md`
 - [x] `docs/SOURCE_POLICY.md` (current source / license entrypoint)
-- [ ] `docs/DATA_QUALITY.md`
-- [ ] `docs/API.md`
+- [x] `docs/DATA_QUALITY.md`
+- [x] `docs/API.md`
 - [x] `docs/OPENAPI.md`
 - [x] `docs/ARTIFACTS.md`
-- [ ] `docs/OBSERVABILITY.md`
-- [ ] `docs/REDIS_CACHE.md`
-- [ ] `docs/FAQ.md`
+- [x] `docs/OBSERVABILITY.md`
+- [x] `docs/REDIS_CACHE.md`
+- [x] `docs/FAQ.md`
 
 特に source / license policy は優先度が高いです。
 現状は [`docs/SOURCE_POLICY.md`](./SOURCE_POLICY.md) がその役割を担っています。
@@ -262,11 +269,11 @@ canonical export に急いで混ぜないこと。
 
 ### v0.2.x: contract polish
 
-- `API_SPEC.md` sync
-- snapshots / changes docs
-- error detail standardization
-- hand-written frontend helper docs
-- contributor / PR update path
+- [x] `API_SPEC.md` sync
+- [x] snapshots / changes docs
+- [x] error detail standardization
+- [x] hand-written frontend helper docs
+- [x] contributor / PR update path
 
 ### v0.3.0: trust package
 
@@ -276,14 +283,14 @@ canonical export に急いで混ぜないこと。
 - `cargo-deny`
 - Dependabot
 - branch protection docs
-- release checklist
+- [x] release checklist
 
 ### v0.4.0: operations
 
 - `/metrics`
-- source freshness watcher
-- publish pipeline
-- cache invalidation by dataset revision
+- [x] source freshness watcher
+- [x] publish pipeline
+- cache invalidation by dataset revision policy
 - systemd production hardening
 
 ### v0.5.0: distribution

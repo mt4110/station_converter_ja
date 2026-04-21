@@ -127,6 +127,13 @@ cd frontend && npm ci && npm run build
 `./scripts/verify_repo.sh` now also runs the frontend station SDK freshness check,
 so OpenAPI changes cannot drift away from regenerated client artifacts.
 
+After SQLite export, compare the primary DB and artifact:
+
+```bash
+cargo run -p station-ops -- verify-sqlite-parity
+./scripts/verify_sqlite_reproducibility.sh
+```
+
 Build a distributable SQLite bundle:
 
 ```bash
@@ -180,16 +187,33 @@ it is not real-time railway data.
   - production runbook
   - systemd path
   - update and failure handling
+- [docs/INDEX.md](docs/INDEX.md)
+  - role-based docs entrypoint
+- [docs/QUICKSTART_API.md](docs/QUICKSTART_API.md)
+  - local API quickstart
+- [docs/QUICKSTART_SQLITE.md](docs/QUICKSTART_SQLITE.md)
+  - SQLite artifact quickstart
 - [docs/DATABASE.md](docs/DATABASE.md)
   - table layout
   - lightweight sample dump
   - example SQL
+- [docs/API.md](docs/API.md)
+  - API endpoint overview
+  - error envelope
 - [docs/RELEASE.md](docs/RELEASE.md)
   - artifact / release flow
   - verify scripts
+- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+  - tag / publish checklist
 - [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
   - SQLite release bundle contents
   - checksum / attestation verification
+- [docs/DATA_FRESHNESS.md](docs/DATA_FRESHNESS.md)
+  - source refresh
+  - freshness claim
+- [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md)
+  - validation floor
+  - parity checks
 - [docs/OPENAPI.md](docs/OPENAPI.md)
   - first-pass OpenAPI design
   - `/openapi.json` and `/docs` plan
@@ -201,6 +225,12 @@ it is not real-time railway data.
 - [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md)
   - canonical source and licensing boundary
   - N05 overlay policy
+- [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)
+  - operator checks
+- [docs/REDIS_CACHE.md](docs/REDIS_CACHE.md)
+  - cache-only policy
+- [docs/FAQ.md](docs/FAQ.md)
+  - common questions
 - [docs/ROADMAP.md](docs/ROADMAP.md)
   - remaining priorities
   - what not to do yet
@@ -209,9 +239,12 @@ it is not real-time railway data.
 ## I want to...
 
 - ship or verify the SQLite artifact: [docs/RELEASE.md](docs/RELEASE.md), [docs/ROADMAP.md](docs/ROADMAP.md)
+- use the SQLite artifact locally: [docs/QUICKSTART_SQLITE.md](docs/QUICKSTART_SQLITE.md)
 - inspect the release bundle contents: [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
-- run the API locally: [README.md](README.md), [API_SPEC.md](API_SPEC.md), [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- run the API locally: [docs/QUICKSTART_API.md](docs/QUICKSTART_API.md), [API_SPEC.md](API_SPEC.md), [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - review the next API contract plan: [docs/OPENAPI.md](docs/OPENAPI.md), [API_SPEC.md](API_SPEC.md)
+- check source freshness: [docs/DATA_FRESHNESS.md](docs/DATA_FRESHNESS.md)
+- check data quality gates: [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md)
 - self-host in production: [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/DEPLOY.md](docs/DEPLOY.md)
 - inspect the schema and example SQL: [docs/DATABASE.md](docs/DATABASE.md)
 - confirm source and licensing policy: [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md), [docs/ROADMAP.md](docs/ROADMAP.md)
@@ -242,15 +275,18 @@ Included:
 - initial `created / updated / removed` diff handling
 - PostgreSQL / MySQL / SQLite artifact delivery
 - product-grade SQLite release bundle
+- OpenAPI JSON / Swagger UI / TypeScript SDK generation
+- dataset snapshot / change history API
+- standard error envelope with optional machine-readable detail
+- source freshness watcher
+- data quality gates and SQLite parity checks
 - example frontend
 - self-hosted systemd path
 
 Not yet included:
 
 - N05 overlay parser
-- production-ready OpenAPI
-- freshness watcher / publish pipeline
-- product-grade data quality gates
+- fully automated release promotion after source refresh
 - full cloud resource implementations
 
 ## License

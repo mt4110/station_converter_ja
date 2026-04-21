@@ -6,8 +6,10 @@ use utoipa::{IntoParams, ToSchema};
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct SearchParams {
+    /// Station name search text. Empty or missing queries return an empty result set.
     #[param(example = "新宿")]
     pub q: Option<String>,
+    /// Maximum number of stations to return. The API clamps this to 1..=100.
     #[param(example = 10, minimum = 1, maximum = 100)]
     pub limit: Option<u32>,
 }
@@ -15,8 +17,10 @@ pub struct SearchParams {
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct LineCatalogParams {
+    /// Optional line name fragment. Empty or missing queries list the first catalog entries.
     #[param(example = "中央")]
     pub q: Option<String>,
+    /// Maximum number of line catalog entries to return. The API clamps this to 1..=1000.
     #[param(example = 60, minimum = 1, maximum = 1000)]
     pub limit: Option<u32>,
 }
@@ -24,10 +28,13 @@ pub struct LineCatalogParams {
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct NearbyParams {
+    /// Latitude used as the representative-point search origin.
     #[param(example = 35.6812)]
     pub lat: f64,
+    /// Longitude used as the representative-point search origin.
     #[param(example = 139.7671)]
     pub lng: f64,
+    /// Maximum number of nearby stations to return. The API clamps this to 1..=100.
     #[param(example = 10, minimum = 1, maximum = 100)]
     pub limit: Option<u32>,
 }
@@ -35,6 +42,7 @@ pub struct NearbyParams {
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct LineStationsParams {
+    /// Optional exact operator name used to disambiguate same-name lines.
     #[param(example = "東日本旅客鉄道")]
     pub operator_name: Option<String>,
 }
@@ -68,6 +76,34 @@ pub enum ApiErrorCode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = json!({
+    "field": "lat",
+    "message": "invalid float literal"
+}))]
+pub struct ApiErrorIssueDto {
+    /// Request field or parameter related to this issue, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    /// Human-readable issue summary.
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(example = json!({
+    "kind": "query_parameters",
+    "issues": [{
+        "field": "lat",
+        "message": "invalid float literal"
+    }]
+}))]
+pub struct ApiErrorDetailPayloadDto {
+    /// Stable category for the detail payload.
+    pub kind: String,
+    /// One or more issues associated with the error.
+    pub issues: Vec<ApiErrorIssueDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(example = json!({
     "code": "internal_error",
     "message": "internal server error"
 }))]
@@ -76,16 +112,26 @@ pub struct ApiErrorDetailDto {
     pub code: ApiErrorCode,
     /// Human-readable error message.
     pub message: String,
+    /// Optional machine-readable context. Existing consumers can continue reading `code` and `message`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<ApiErrorDetailPayloadDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = json!({
     "error": {
-        "code": "internal_error",
-        "message": "internal server error"
+        "code": "invalid_request",
+        "message": "Failed to deserialize query string",
+        "detail": {
+            "kind": "query_parameters",
+            "issues": [{
+                "message": "Failed to deserialize query string"
+            }]
+        }
     }
 }))]
 pub struct ApiErrorResponseDto {
+    /// Standard error envelope for public station-api endpoints.
     pub error: ApiErrorDetailDto,
 }
 
@@ -95,20 +141,49 @@ pub struct ApiErrorResponseDto {
     "service": "station-api"
 }))]
 pub struct HealthResponseDto {
+    /// Liveness status.
     pub status: String,
+    /// Service name from the active configuration.
     pub service: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[schema(example = json!({
     "status": "ready",
+    "active_station_count": 10155,
+    "active_snapshot_id": 25
+}))]
+pub struct ReadinessDatasetDto {
+    /// `ready`, `needs_ingest`, or `unknown`.
+    pub status: String,
+    /// Active N02 station count when the database query is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_station_count: Option<i64>,
+    /// Latest active station version snapshot id when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_snapshot_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[schema(example = json!({
+    "status": "ready",
     "database_type": "postgres",
-    "cache": "disabled"
+    "cache": "disabled",
+    "dataset": {
+        "status": "ready",
+        "active_station_count": 10155,
+        "active_snapshot_id": 25
+    }
 }))]
 pub struct ReadinessResponseDto {
+    /// `ready` when the backing database responds, otherwise `not_ready`.
     pub status: String,
+    /// Active primary database type.
     pub database_type: String,
+    /// Redis readiness mode: `disabled`, `optional`, or `required`.
     pub cache: String,
+    /// Dataset readiness summary for the canonical N02 station rows.
+    pub dataset: ReadinessDatasetDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -118,8 +193,11 @@ pub struct ReadinessResponseDto {
     "source_url": "https://example.com/N02-25_GML.zip"
 }))]
 pub struct DatasetSnapshotRefDto {
+    /// Internal source snapshot id for the latest ingested N02 snapshot.
     pub id: i64,
+    /// MLIT source version when it can be derived from the source package.
     pub source_version: Option<String>,
+    /// Original source URL or local fixture URL used for ingest.
     pub source_url: String,
 }
 
@@ -139,13 +217,21 @@ pub struct DatasetSnapshotRefDto {
     }
 }))]
 pub struct DatasetStatusResponseDto {
+    /// `ready` when the active N02 row count looks like a full dataset, otherwise `needs_ingest`.
     pub status: String,
+    /// True when active N02 station count meets the current full-dataset floor.
     pub looks_like_full_dataset: bool,
+    /// True when the active snapshot came from a non-HTTP local source URL.
     pub source_is_local: bool,
+    /// Active N02 station rows exposed through `stations_latest`.
     pub active_station_count: i64,
+    /// Distinct active N02 station names.
     pub distinct_station_name_count: i64,
+    /// Distinct active N02 line names.
     pub distinct_line_count: i64,
+    /// Number of source snapshots represented by active station versions.
     pub active_version_snapshot_count: i64,
+    /// Latest ingested N02 source snapshot metadata, when one exists.
     pub active_snapshot: Option<DatasetSnapshotRefDto>,
 }
 
@@ -160,12 +246,19 @@ pub struct DatasetStatusResponseDto {
     "status": "active"
 }))]
 pub struct StationSummaryDto {
+    /// Stable station identity within this dataset.
     pub station_uid: String,
+    /// Station name.
     pub station_name: String,
+    /// Line name.
     pub line_name: String,
+    /// Operator name.
     pub operator_name: String,
+    /// Representative point latitude.
     pub latitude: f64,
+    /// Representative point longitude.
     pub longitude: f64,
+    /// Station status from the latest version.
     pub status: String,
 }
 
@@ -184,8 +277,11 @@ pub struct StationSummaryDto {
     "query": "新宿"
 }))]
 pub struct StationSearchResponseDto {
+    /// Station search results ordered by match quality and stable display fields.
     pub items: Vec<StationSummaryDto>,
+    /// Normalized response limit.
     pub limit: i64,
+    /// Trimmed query text used for this search.
     pub query: String,
 }
 
@@ -195,7 +291,9 @@ pub struct StationSearchResponseDto {
     "lng": 139.6917
 }))]
 pub struct NearbyStationsQueryDto {
+    /// Latitude used for the nearby search.
     pub lat: f64,
+    /// Longitude used for the nearby search.
     pub lng: f64,
 }
 
@@ -217,8 +315,11 @@ pub struct NearbyStationsQueryDto {
     }
 }))]
 pub struct NearbyStationsResponseDto {
+    /// Nearby station results ordered by representative-point distance.
     pub items: Vec<StationSummaryDto>,
+    /// Normalized response limit.
     pub limit: i64,
+    /// Search origin echoed back to the caller.
     pub query: NearbyStationsQueryDto,
 }
 
@@ -229,8 +330,11 @@ pub struct NearbyStationsResponseDto {
     "station_count": 24
 }))]
 pub struct LineCatalogItemDto {
+    /// Line name.
     pub line_name: String,
+    /// Operator that owns this line-name entry.
     pub operator_name: String,
+    /// Active station count for this line/operator pair.
     pub station_count: i64,
 }
 
@@ -245,8 +349,11 @@ pub struct LineCatalogItemDto {
     "query": "中央"
 }))]
 pub struct LineCatalogResponseDto {
+    /// Line catalog entries grouped by line name and operator name.
     pub items: Vec<LineCatalogItemDto>,
+    /// Normalized response limit.
     pub limit: i64,
+    /// Trimmed line-name query text used for this catalog lookup.
     pub query: String,
 }
 
@@ -265,8 +372,11 @@ pub struct LineCatalogResponseDto {
     }]
 }))]
 pub struct LineStationsResponseDto {
+    /// Exact line name requested by the caller.
     pub line_name: String,
+    /// Exact operator filter when provided by the caller.
     pub operator_name: Option<String>,
+    /// Stations on the requested line, optionally scoped by operator.
     pub items: Vec<StationSummaryDto>,
 }
 
@@ -284,7 +394,9 @@ pub struct LineStationsResponseDto {
     }]
 }))]
 pub struct OperatorStationsResponseDto {
+    /// Exact operator name requested by the caller.
     pub operator_name: String,
+    /// Stations operated by the requested operator.
     pub items: Vec<StationSummaryDto>,
 }
 

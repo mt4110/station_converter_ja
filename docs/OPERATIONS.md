@@ -121,6 +121,19 @@ artifact 連動が必要なら:
 cargo run -p station-ops -- job ingest-n02 --export-sqlite
 ```
 
+source SHA-256 を先に比較し、変わっていない snapshot の parse / persist を避けたい場合:
+
+```bash
+cargo run -p station-ops -- job refresh-n02 --check-only
+cargo run -p station-ops -- job refresh-n02
+```
+
+変わっていた場合だけ SQLite export まで繋げたい場合:
+
+```bash
+cargo run -p station-ops -- job refresh-n02 --export-sqlite
+```
+
 ## Lock policy
 
 - lock file は `JOB_LOCK_DIR` 配下に置く
@@ -161,6 +174,12 @@ MySQL を primary write にしている場合:
 ```
 
 生成される bundle の中身と検証方法は [`docs/ARTIFACTS.md`](./ARTIFACTS.md) を参照してください。
+
+export 後に primary DB と SQLite artifact の parity を確認する場合:
+
+```bash
+cargo run -p station-ops -- verify-sqlite-parity
+```
 
 ### Verify before updating
 

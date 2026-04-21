@@ -14,8 +14,9 @@ const SOURCE_NAME: &str = "ksj_n02_station";
 const STATION_UID_PREFIX: &str = "stn_n02_";
 
 const DEFAULT_MIN_STATIONS: i64 = 10_000;
-const DEFAULT_MIN_LINES: i64 = 500;
-const DEFAULT_MIN_OPERATORS: i64 = 150;
+const DEFAULT_MIN_STATION_NAMES: i64 = 9_000;
+const DEFAULT_MIN_LINES: i64 = 600;
+const DEFAULT_MIN_OPERATORS: i64 = 170;
 
 const HARD_MIN_LATITUDE: f64 = 20.0;
 const HARD_MAX_LATITUDE: f64 = 46.5;
@@ -37,6 +38,8 @@ pub struct ValidateIngestArgs {
     pub strict: bool,
     #[arg(long, default_value_t = DEFAULT_MIN_STATIONS)]
     pub min_stations: i64,
+    #[arg(long, default_value_t = DEFAULT_MIN_STATION_NAMES)]
+    pub min_station_names: i64,
     #[arg(long, default_value_t = DEFAULT_MIN_LINES)]
     pub min_lines: i64,
     #[arg(long, default_value_t = DEFAULT_MIN_OPERATORS)]
@@ -49,6 +52,7 @@ impl Default for ValidateIngestArgs {
             json: false,
             strict: false,
             min_stations: DEFAULT_MIN_STATIONS,
+            min_station_names: DEFAULT_MIN_STATION_NAMES,
             min_lines: DEFAULT_MIN_LINES,
             min_operators: DEFAULT_MIN_OPERATORS,
         }
@@ -115,6 +119,7 @@ struct SnapshotMeta {
 #[derive(Debug)]
 struct LatestMetrics {
     station_count: i64,
+    station_name_count: i64,
     line_count: i64,
     operator_count: i64,
     blank_station_name_count: i64,
@@ -122,6 +127,13 @@ struct LatestMetrics {
     blank_operator_name_count: i64,
     out_of_range_coordinate_count: i64,
     suspicious_coordinate_count: i64,
+}
+
+#[derive(Debug)]
+struct IntegrityMetrics {
+    missing_snapshot_reference_count: i64,
+    missing_identity_reference_count: i64,
+    invalid_version_interval_count: i64,
 }
 
 #[derive(Debug)]
@@ -180,6 +192,11 @@ pub async fn validate_ingest(
                 args.min_stations,
             ));
             report.checks.push(threshold_check(
+                "min_distinct_station_name_count",
+                metrics.station_name_count,
+                args.min_station_names,
+            ));
+            report.checks.push(threshold_check(
                 "min_line_count",
                 metrics.line_count,
                 args.min_lines,
@@ -220,6 +237,20 @@ pub async fn validate_ingest(
             report
                 .checks
                 .push(change_summary_check(metrics.station_count, &change_summary));
+
+            let integrity = fetch_integrity_metrics(pool, dialect).await?;
+            report.checks.push(zero_check(
+                "missing_station_version_snapshot_reference_count",
+                integrity.missing_snapshot_reference_count,
+            ));
+            report.checks.push(zero_check(
+                "missing_station_version_identity_reference_count",
+                integrity.missing_identity_reference_count,
+            ));
+            report.checks.push(zero_check(
+                "invalid_station_version_interval_count",
+                integrity.invalid_version_interval_count,
+            ));
 
             report.status = overall_status(&report.checks, args.strict);
             Ok(report)
@@ -293,6 +324,7 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
     let sql = format!(
         "SELECT
            {} AS station_count,
+           {} AS station_name_count,
            {} AS line_count,
            {} AS operator_count,
            {} AS blank_station_name_count,
@@ -301,8 +333,9 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
            {} AS out_of_range_coordinate_count,
            {} AS suspicious_coordinate_count
          FROM stations_latest
-         WHERE {station_uid_prefix_match}",
+        WHERE {station_uid_prefix_match}",
         integer_aggregate_sql(dialect, "COUNT(*)"),
+        integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "station_name")),
         integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "line_name")),
         integer_aggregate_sql(dialect, &distinct_text_count_sql(dialect, "operator_name")),
         integer_aggregate_sql(
@@ -345,6 +378,7 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
 
     Ok(LatestMetrics {
         station_count: row.try_get::<i64, _>("station_count")?,
+        station_name_count: row.try_get::<i64, _>("station_name_count")?,
         line_count: row.try_get::<i64, _>("line_count")?,
         operator_count: row.try_get::<i64, _>("operator_count")?,
         blank_station_name_count: row
@@ -361,6 +395,50 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
             .unwrap_or_default(),
         suspicious_coordinate_count: row
             .try_get::<Option<i64>, _>("suspicious_coordinate_count")?
+            .unwrap_or_default(),
+    })
+}
+
+async fn fetch_integrity_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<IntegrityMetrics> {
+    let station_uid_prefix_match = station_uid_prefix_match_sql(dialect, "sv.station_uid");
+    let sql = format!(
+        "SELECT
+           {} AS missing_snapshot_reference_count,
+           {} AS missing_identity_reference_count,
+           {} AS invalid_version_interval_count
+         FROM station_versions AS sv
+         LEFT JOIN source_snapshots AS ss
+           ON ss.id = sv.snapshot_id
+         LEFT JOIN station_identities AS si
+           ON si.station_uid = sv.station_uid
+         WHERE {station_uid_prefix_match}",
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN ss.id IS NULL THEN 1 ELSE 0 END)"
+        ),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN si.station_uid IS NULL THEN 1 ELSE 0 END)"
+        ),
+        integer_aggregate_sql(
+            dialect,
+            "SUM(CASE WHEN sv.valid_to IS NOT NULL AND sv.valid_to <= sv.valid_from THEN 1 ELSE 0 END)"
+        ),
+    );
+    let row = sqlx::query(&dialect.statement(&sql))
+        .bind(STATION_UID_PREFIX)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(IntegrityMetrics {
+        missing_snapshot_reference_count: row
+            .try_get::<Option<i64>, _>("missing_snapshot_reference_count")?
+            .unwrap_or_default(),
+        missing_identity_reference_count: row
+            .try_get::<Option<i64>, _>("missing_identity_reference_count")?
+            .unwrap_or_default(),
+        invalid_version_interval_count: row
+            .try_get::<Option<i64>, _>("invalid_version_interval_count")?
             .unwrap_or_default(),
     })
 }
@@ -694,6 +772,7 @@ mod tests {
             SqlDialect::Sqlite,
             &ValidateIngestArgs {
                 min_stations: 2,
+                min_station_names: 2,
                 min_lines: 2,
                 min_operators: 2,
                 ..ValidateIngestArgs::default()
@@ -753,6 +832,7 @@ mod tests {
             SqlDialect::Sqlite,
             &ValidateIngestArgs {
                 min_stations: 2,
+                min_station_names: 1,
                 min_lines: 1,
                 min_operators: 1,
                 ..ValidateIngestArgs::default()
@@ -774,6 +854,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validate_ingest_fails_on_low_distinct_station_name_count() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 1, "https://example.com/N02-24_GML.zip").await;
+        insert_identity(&pool, "stn_n02_same_name_1", "同名駅").await;
+        insert_identity(&pool, "stn_n02_same_name_2", "同名駅").await;
+        insert_station_version(
+            &pool,
+            1,
+            StationVersionSeed::new(
+                "stn_n02_same_name_1",
+                "同名駅",
+                "京王線",
+                "京王電鉄",
+                35.69,
+                139.70,
+            ),
+        )
+        .await;
+        insert_station_version(
+            &pool,
+            1,
+            StationVersionSeed::new(
+                "stn_n02_same_name_2",
+                "同名駅",
+                "中央線",
+                "東日本旅客鉄道",
+                35.70,
+                139.71,
+            ),
+        )
+        .await;
+        insert_change_event(&pool, 1, "stn_n02_same_name_1", "created").await;
+        insert_change_event(&pool, 1, "stn_n02_same_name_2", "created").await;
+
+        let report = validate_ingest(
+            &pool,
+            SqlDialect::Sqlite,
+            &ValidateIngestArgs {
+                min_stations: 2,
+                min_station_names: 2,
+                min_lines: 2,
+                min_operators: 2,
+                ..ValidateIngestArgs::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let check = report
+            .checks
+            .iter()
+            .find(|check| check.name == "min_distinct_station_name_count")
+            .unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Failed);
+        assert_eq!(check.status, ValidationStatus::Failed);
+        assert_eq!(check.observed, json!(1));
+    }
+
+    #[tokio::test]
     async fn validate_ingest_fails_on_blank_names() {
         let pool = test_pool().await;
         insert_snapshot(&pool, 1, "https://example.com/N02-24_GML.zip").await;
@@ -791,6 +931,7 @@ mod tests {
             SqlDialect::Sqlite,
             &ValidateIngestArgs {
                 min_stations: 1,
+                min_station_names: 1,
                 min_lines: 1,
                 min_operators: 1,
                 ..ValidateIngestArgs::default()
@@ -850,6 +991,7 @@ mod tests {
             SqlDialect::Sqlite,
             &ValidateIngestArgs {
                 min_stations: 2,
+                min_station_names: 1,
                 min_lines: 1,
                 min_operators: 1,
                 ..ValidateIngestArgs::default()
@@ -904,6 +1046,7 @@ mod tests {
             SqlDialect::Sqlite,
             &ValidateIngestArgs {
                 min_stations: 2,
+                min_station_names: 2,
                 min_lines: 2,
                 min_operators: 2,
                 ..ValidateIngestArgs::default()
@@ -941,6 +1084,7 @@ mod tests {
             SqlDialect::Sqlite,
             &ValidateIngestArgs {
                 min_stations: 1,
+                min_station_names: 1,
                 min_lines: 1,
                 min_operators: 1,
                 ..ValidateIngestArgs::default()
@@ -967,6 +1111,62 @@ mod tests {
                 .unwrap()
                 .status,
             ValidationStatus::Ok
+        );
+    }
+
+    #[tokio::test]
+    async fn validate_ingest_fails_on_invalid_version_interval() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 1, "https://example.com/N02-24_GML.zip").await;
+        insert_identity(&pool, "stn_n02_invalid_interval", "逆転駅").await;
+        insert_station_version(
+            &pool,
+            1,
+            StationVersionSeed::new(
+                "stn_n02_invalid_interval",
+                "逆転駅",
+                "逆転線",
+                "逆転交通",
+                35.69,
+                139.70,
+            ),
+        )
+        .await;
+        insert_change_event(&pool, 1, "stn_n02_invalid_interval", "created").await;
+        sqlx::query(
+            "UPDATE station_versions
+             SET valid_from = '2026-04-21 10:00:00',
+                 valid_to = '2026-04-21 09:00:00'
+             WHERE station_uid = ?",
+        )
+        .bind("stn_n02_invalid_interval")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let report = validate_ingest(
+            &pool,
+            SqlDialect::Sqlite,
+            &ValidateIngestArgs {
+                min_stations: 0,
+                min_station_names: 0,
+                min_lines: 0,
+                min_operators: 0,
+                ..ValidateIngestArgs::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.status, ValidationStatus::Failed);
+        assert_eq!(
+            report
+                .checks
+                .iter()
+                .find(|check| check.name == "invalid_station_version_interval_count")
+                .unwrap()
+                .status,
+            ValidationStatus::Failed
         );
     }
 

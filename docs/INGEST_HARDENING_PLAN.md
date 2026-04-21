@@ -86,7 +86,7 @@ frontend や API の機能追加はこのフェーズでは主目的にしない
 補足:
 
 - MySQL の default collation (`utf8mb4_0900_ai_ci`) では `COUNT(DISTINCT line_name)` が bytewise distinct より 1 件少なく見えるケースがあった
-- `validate-ingest` の distinct line / operator count は bytewise semantics に寄せて cross-DB で揃える
+- `validate-ingest` の distinct station / line / operator count は bytewise semantics に寄せて cross-DB で揃える
 - API の `stations/search` / `lines/{line_name}/stations` / `operators/{operator_name}/stations` も MySQL では binary collation に寄せ、`の` と `ノ` のような別値が混ざらないようにする
 - これらは local machine の reference 値であり、別マシンや別ストレージ条件での最適値を保証するものではない
 
@@ -287,6 +287,8 @@ local で中身確認する operator flow は次を標準にする。
 - `validate-ingest` fails on low-count fixture
 - `validate-ingest` fails on blank names
 - `validate-ingest` fails on duplicate latest station_uid
+- `validate-ingest` fails on low distinct station name count
+- `validate-ingest` fails on invalid version intervals
 - `IngestReport` phase timing fields are populated and monotonic enough for sanity
 
 ### Next Tests To Add
@@ -347,7 +349,7 @@ Current note:
 - TUI では `validate-ingest` の pass / warning / fail を見られるようになった
 - TUI では `Quick Start` の strict validate を切り替えられる
 - TUI では実行中 workflow を cancel できる
-- API ready check への surfacing は未着手
+- API `/ready` では軽量な dataset readiness summary を見られる
 
 ## Suggested Session Kickoff Checklist
 

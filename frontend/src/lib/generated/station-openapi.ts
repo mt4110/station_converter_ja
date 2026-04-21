@@ -179,18 +179,57 @@ export interface components {
         ApiErrorDetailDto: {
             /** @description Stable machine-readable error code. */
             code: components["schemas"]["ApiErrorCode"];
+            detail?: null | components["schemas"]["ApiErrorDetailPayloadDto"];
             /** @description Human-readable error message. */
             message: string;
         };
         /**
          * @example {
+         *       "issues": [
+         *         {
+         *           "field": "lat",
+         *           "message": "invalid float literal"
+         *         }
+         *       ],
+         *       "kind": "query_parameters"
+         *     }
+         */
+        ApiErrorDetailPayloadDto: {
+            /** @description One or more issues associated with the error. */
+            issues: components["schemas"]["ApiErrorIssueDto"][];
+            /** @description Stable category for the detail payload. */
+            kind: string;
+        };
+        /**
+         * @example {
+         *       "field": "lat",
+         *       "message": "invalid float literal"
+         *     }
+         */
+        ApiErrorIssueDto: {
+            /** @description Request field or parameter related to this issue, when known. */
+            field?: string | null;
+            /** @description Human-readable issue summary. */
+            message: string;
+        };
+        /**
+         * @example {
          *       "error": {
-         *         "code": "internal_error",
-         *         "message": "internal server error"
+         *         "code": "invalid_request",
+         *         "detail": {
+         *           "issues": [
+         *             {
+         *               "message": "Failed to deserialize query string"
+         *             }
+         *           ],
+         *           "kind": "query_parameters"
+         *         },
+         *         "message": "Failed to deserialize query string"
          *       }
          *     }
          */
         ApiErrorResponseDto: {
+            /** @description Standard error envelope for public station-api endpoints. */
             error: components["schemas"]["ApiErrorDetailDto"];
         };
         /**
@@ -507,9 +546,14 @@ export interface components {
          *     }
          */
         DatasetSnapshotRefDto: {
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Internal source snapshot id for the latest ingested N02 snapshot.
+             */
             id: number;
+            /** @description Original source URL or local fixture URL used for ingest. */
             source_url: string;
+            /** @description MLIT source version when it can be derived from the source package. */
             source_version?: string | null;
         };
         /**
@@ -562,16 +606,31 @@ export interface components {
          */
         DatasetStatusResponseDto: {
             active_snapshot?: null | components["schemas"]["DatasetSnapshotRefDto"];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Active N02 station rows exposed through `stations_latest`.
+             */
             active_station_count: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Number of source snapshots represented by active station versions.
+             */
             active_version_snapshot_count: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Distinct active N02 line names.
+             */
             distinct_line_count: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Distinct active N02 station names.
+             */
             distinct_station_name_count: number;
+            /** @description True when active N02 station count meets the current full-dataset floor. */
             looks_like_full_dataset: boolean;
+            /** @description True when the active snapshot came from a non-HTTP local source URL. */
             source_is_local: boolean;
+            /** @description `ready` when the active N02 row count looks like a full dataset, otherwise `needs_ingest`. */
             status: string;
         };
         /**
@@ -581,7 +640,9 @@ export interface components {
          *     }
          */
         HealthResponseDto: {
+            /** @description Service name from the active configuration. */
             service: string;
+            /** @description Liveness status. */
             status: string;
         };
         /**
@@ -592,9 +653,14 @@ export interface components {
          *     }
          */
         LineCatalogItemDto: {
+            /** @description Line name. */
             line_name: string;
+            /** @description Operator that owns this line-name entry. */
             operator_name: string;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Active station count for this line/operator pair.
+             */
             station_count: number;
         };
         /**
@@ -611,9 +677,14 @@ export interface components {
          *     }
          */
         LineCatalogResponseDto: {
+            /** @description Line catalog entries grouped by line name and operator name. */
             items: components["schemas"]["LineCatalogItemDto"][];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Normalized response limit.
+             */
             limit: number;
+            /** @description Trimmed line-name query text used for this catalog lookup. */
             query: string;
         };
         /**
@@ -634,8 +705,11 @@ export interface components {
          *     }
          */
         LineStationsResponseDto: {
+            /** @description Stations on the requested line, optionally scoped by operator. */
             items: components["schemas"]["StationSummaryDto"][];
+            /** @description Exact line name requested by the caller. */
             line_name: string;
+            /** @description Exact operator filter when provided by the caller. */
             operator_name?: string | null;
         };
         /**
@@ -645,9 +719,15 @@ export interface components {
          *     }
          */
         NearbyStationsQueryDto: {
-            /** Format: double */
+            /**
+             * Format: double
+             * @description Latitude used for the nearby search.
+             */
             lat: number;
-            /** Format: double */
+            /**
+             * Format: double
+             * @description Longitude used for the nearby search.
+             */
             lng: number;
         };
         /**
@@ -671,9 +751,14 @@ export interface components {
          *     }
          */
         NearbyStationsResponseDto: {
+            /** @description Nearby station results ordered by representative-point distance. */
             items: components["schemas"]["StationSummaryDto"][];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Normalized response limit.
+             */
             limit: number;
+            /** @description Search origin echoed back to the caller. */
             query: components["schemas"]["NearbyStationsQueryDto"];
         };
         /**
@@ -693,19 +778,52 @@ export interface components {
          *     }
          */
         OperatorStationsResponseDto: {
+            /** @description Stations operated by the requested operator. */
             items: components["schemas"]["StationSummaryDto"][];
+            /** @description Exact operator name requested by the caller. */
             operator_name: string;
+        };
+        /**
+         * @example {
+         *       "active_snapshot_id": 25,
+         *       "active_station_count": 10155,
+         *       "status": "ready"
+         *     }
+         */
+        ReadinessDatasetDto: {
+            /**
+             * Format: int64
+             * @description Latest active station version snapshot id when available.
+             */
+            active_snapshot_id?: number | null;
+            /**
+             * Format: int64
+             * @description Active N02 station count when the database query is available.
+             */
+            active_station_count?: number | null;
+            /** @description `ready`, `needs_ingest`, or `unknown`. */
+            status: string;
         };
         /**
          * @example {
          *       "cache": "disabled",
          *       "database_type": "postgres",
+         *       "dataset": {
+         *         "active_snapshot_id": 25,
+         *         "active_station_count": 10155,
+         *         "status": "ready"
+         *       },
          *       "status": "ready"
          *     }
          */
         ReadinessResponseDto: {
+            /** @description Redis readiness mode: `disabled`, `optional`, or `required`. */
             cache: string;
+            /** @description Active primary database type. */
             database_type: string;
+            /** @description Dataset readiness summary for the canonical N02 station rows. */
+            dataset: components["schemas"]["ReadinessDatasetDto"];
+            /** @description `ready` when the backing database responds, otherwise `not_ready`. */
             status: string;
         };
         /**
@@ -726,9 +844,14 @@ export interface components {
          *     }
          */
         StationSearchResponseDto: {
+            /** @description Station search results ordered by match quality and stable display fields. */
             items: components["schemas"]["StationSummaryDto"][];
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Normalized response limit.
+             */
             limit: number;
+            /** @description Trimmed query text used for this search. */
             query: string;
         };
         /**
@@ -743,14 +866,25 @@ export interface components {
          *     }
          */
         StationSummaryDto: {
-            /** Format: double */
+            /**
+             * Format: double
+             * @description Representative point latitude.
+             */
             latitude: number;
+            /** @description Line name. */
             line_name: string;
-            /** Format: double */
+            /**
+             * Format: double
+             * @description Representative point longitude.
+             */
             longitude: number;
+            /** @description Operator name. */
             operator_name: string;
+            /** @description Station name. */
             station_name: string;
+            /** @description Stable station identity within this dataset. */
             station_uid: string;
+            /** @description Station status from the latest version. */
             status: string;
         };
     };
@@ -945,9 +1079,15 @@ export interface operations {
     line_catalog: {
         parameters: {
             query?: {
-                /** @example 中央 */
+                /**
+                 * @description Optional line name fragment. Empty or missing queries list the first catalog entries.
+                 * @example 中央
+                 */
                 q?: string;
-                /** @example 60 */
+                /**
+                 * @description Maximum number of line catalog entries to return. The API clamps this to 1..=1000.
+                 * @example 60
+                 */
                 limit?: number;
             };
             header?: never;
@@ -988,7 +1128,10 @@ export interface operations {
     line_stations: {
         parameters: {
             query?: {
-                /** @example 東日本旅客鉄道 */
+                /**
+                 * @description Optional exact operator name used to disambiguate same-name lines.
+                 * @example 東日本旅客鉄道
+                 */
                 operator_name?: string;
             };
             header?: never;
@@ -1064,11 +1207,20 @@ export interface operations {
     nearby_stations: {
         parameters: {
             query: {
-                /** @example 35.6812 */
+                /**
+                 * @description Latitude used as the representative-point search origin.
+                 * @example 35.6812
+                 */
                 lat: number;
-                /** @example 139.7671 */
+                /**
+                 * @description Longitude used as the representative-point search origin.
+                 * @example 139.7671
+                 */
                 lng: number;
-                /** @example 10 */
+                /**
+                 * @description Maximum number of nearby stations to return. The API clamps this to 1..=100.
+                 * @example 10
+                 */
                 limit?: number;
             };
             header?: never;
@@ -1109,9 +1261,15 @@ export interface operations {
     search_stations: {
         parameters: {
             query?: {
-                /** @example 新宿 */
+                /**
+                 * @description Station name search text. Empty or missing queries return an empty result set.
+                 * @example 新宿
+                 */
                 q?: string;
-                /** @example 10 */
+                /**
+                 * @description Maximum number of stations to return. The API clamps this to 1..=100.
+                 * @example 10
+                 */
                 limit?: number;
             };
             header?: never;

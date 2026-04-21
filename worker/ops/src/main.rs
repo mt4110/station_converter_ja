@@ -1,4 +1,5 @@
 mod export_sqlite;
+mod parity;
 mod validate_ingest;
 
 use std::{process::ExitCode, str::FromStr};
@@ -11,7 +12,7 @@ use sqlx::{
     postgres::PgPoolOptions,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
-use station_crawler::{run_n02_ingest_cycle, N02_INGEST_LOCK_NAME};
+use station_crawler::{refresh_n02_source, run_n02_ingest_cycle, N02_INGEST_LOCK_NAME};
 use station_shared::{
     config::{AppConfig, DatabaseType},
     db::{connect_any_pool, SqlDialect},
@@ -44,6 +45,7 @@ enum Commands {
         yes: bool,
     },
     ExportSqlite,
+    VerifySqliteParity,
     ValidateIngest(ValidateIngestArgs),
     Job {
         #[command(subcommand)]
@@ -54,6 +56,12 @@ enum Commands {
 #[derive(Debug, Subcommand)]
 enum Jobs {
     IngestN02 {
+        #[arg(long)]
+        export_sqlite: bool,
+    },
+    RefreshN02 {
+        #[arg(long)]
+        check_only: bool,
         #[arg(long)]
         export_sqlite: bool,
     },
@@ -97,13 +105,70 @@ async fn run() -> Result<ExitCode> {
                 "sqlite artifact export complete"
             );
         }
+        Commands::VerifySqliteParity => return run_verify_sqlite_parity(&config).await,
         Commands::ValidateIngest(args) => return run_validate_ingest(&config, args).await,
         Commands::Job { job } => match job {
             Jobs::IngestN02 { export_sqlite } => run_ingest_n02_job(&config, export_sqlite).await?,
+            Jobs::RefreshN02 {
+                check_only,
+                export_sqlite,
+            } => run_refresh_n02_job(&config, check_only, export_sqlite).await?,
         },
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+async fn run_refresh_n02_job(
+    config: &AppConfig,
+    check_only: bool,
+    chain_export_sqlite: bool,
+) -> Result<()> {
+    if chain_export_sqlite && check_only {
+        bail!("refresh-n02 --check-only cannot be combined with --export-sqlite");
+    }
+    if chain_export_sqlite && matches!(config.database_type, DatabaseType::Sqlite) {
+        bail!("--export-sqlite expects DATABASE_TYPE to be postgres or mysql");
+    }
+
+    let _ingest_lock = acquire_job_lock(
+        &config.job_lock_dir,
+        N02_INGEST_LOCK_NAME,
+        &config.service_name,
+    )
+    .await?;
+    let pool = connect_any_pool(&config.database_url).await?;
+    let dialect = SqlDialect::from(&config.database_type);
+    let report = refresh_n02_source(config, &pool, dialect, !check_only).await?;
+
+    info!(
+        source_name = report.source_name,
+        source_url = %report.source_url,
+        source_sha256 = %report.source_sha256,
+        latest_snapshot_id = report.latest_snapshot_id,
+        latest_source_sha256 = report.latest_source_sha256.as_deref().unwrap_or("none"),
+        changed = report.changed,
+        ingested = report.ingested,
+        load_ms = report.load_ms,
+        total_ms = report.total_ms,
+        "refresh-n02 job complete"
+    );
+
+    if chain_export_sqlite && report.ingested {
+        let export_report = export_sqlite::export_sqlite(config).await?;
+        info!(
+            output_path = %export_report.output_path.display(),
+            source_snapshots = export_report.source_snapshots,
+            station_identities = export_report.station_identities,
+            station_versions = export_report.station_versions,
+            station_change_events = export_report.station_change_events,
+            "refresh-n02 chained sqlite export complete"
+        );
+    }
+
+    println!("{}", serde_json::to_string_pretty(&report)?);
+
+    Ok(())
 }
 
 async fn migrate(config: &AppConfig) -> Result<()> {
@@ -262,5 +327,11 @@ async fn run_validate_ingest(config: &AppConfig, args: ValidateIngestArgs) -> Re
 
     println!("{output}");
 
+    Ok(report.exit_code())
+}
+
+async fn run_verify_sqlite_parity(config: &AppConfig) -> Result<ExitCode> {
+    let report = parity::verify_sqlite_parity(config).await?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(report.exit_code())
 }

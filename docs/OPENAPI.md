@@ -114,7 +114,7 @@ public API DTO は `worker/api` に閉じます。
 ### 1. `API_SPEC.md` の同期
 
 - example、文言、error note を generated contract と合わせ続ける
-- `/openapi.json` と `/docs` が canonical reference であることを docs 側でも明確にする
+- `/openapi.json` と `/docs` が canonical reference であることは docs 側にも明記済み
 - generated OpenAPI の field description と `API_SPEC.md` の説明を同じ意味に保つ
 
 ### 2. snapshots / changes の説明強化
@@ -122,13 +122,15 @@ public API DTO は `worker/api` に閉じます。
 - `/v1/dataset/snapshots` と `/v1/dataset/changes` 自体はもう public endpoint である
 - 説明は「source snapshot の履歴」と「station identity の差分イベント」を混ぜない
 - examples は count 固定に寄りすぎず、shape と読み方を示す
+- field-level description は generated OpenAPI にも載せる
 
 ### 3. error detail 標準化
 
 - 現状の共通 envelope は `error.code` / `error.message`
-- field-level あるいは machine-readable detail が必要なら、non-breaking に optional `detail` を足す
+- optional `error.detail` は `kind` と `issues[]` を持つ
+- `detail.kind` は payload category、`detail.issues[].field` は分かる場合だけ入れる
+- 既存 consumer は `code` / `message` を読み続けられる
 - ここは OpenAPI と [`API_SPEC.md`](../API_SPEC.md) を同時更新する
-- optional `detail` はまだ追加しない。まず current envelope を明文化する
 
 ### 4. hand-written endpoint 境界の明記
 
@@ -143,9 +145,8 @@ public API DTO は `worker/api` に閉じます。
 ## Next Execution Order
 
 1. `API_SPEC.md` と README の文言を generated contract に合わせ続ける
-2. snapshots / changes の example を count 固定に寄りすぎない形で整える
-3. `ApiErrorResponseDto` に optional `detail` が必要かを、実需要が出た時点で決める
-4. `generate:station-sdk` / `verify:station-sdk` / CI wiring を green のまま保つ
+2. `generate:station-sdk` / `verify:station-sdk` / CI wiring を green のまま保つ
+3. `error.detail` に新しい `kind` を追加する時は `API_SPEC.md` と generated SDK を同時更新する
 
 ## Done Enough
 

@@ -3,13 +3,14 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::schema::{
-    ApiErrorCode, ApiErrorDetailDto, ApiErrorResponseDto, DatasetChangeDetailDto,
-    DatasetChangeEventDto, DatasetChangeKindDto, DatasetChangeVersionRefDto,
-    DatasetChangesResponseDto, DatasetSnapshotChangeCountsDto, DatasetSnapshotDto,
-    DatasetSnapshotRefDto, DatasetSnapshotsResponseDto, DatasetStatusResponseDto,
-    HealthResponseDto, LineCatalogItemDto, LineCatalogResponseDto, LineStationsResponseDto,
-    NearbyStationsQueryDto, NearbyStationsResponseDto, OperatorStationsResponseDto,
-    ReadinessResponseDto, StationSearchResponseDto, StationSummaryDto,
+    ApiErrorCode, ApiErrorDetailDto, ApiErrorDetailPayloadDto, ApiErrorIssueDto,
+    ApiErrorResponseDto, DatasetChangeDetailDto, DatasetChangeEventDto, DatasetChangeKindDto,
+    DatasetChangeVersionRefDto, DatasetChangesResponseDto, DatasetSnapshotChangeCountsDto,
+    DatasetSnapshotDto, DatasetSnapshotRefDto, DatasetSnapshotsResponseDto,
+    DatasetStatusResponseDto, HealthResponseDto, LineCatalogItemDto, LineCatalogResponseDto,
+    LineStationsResponseDto, NearbyStationsQueryDto, NearbyStationsResponseDto,
+    OperatorStationsResponseDto, ReadinessDatasetDto, ReadinessResponseDto,
+    StationSearchResponseDto, StationSummaryDto,
 };
 
 #[derive(OpenApi)]
@@ -29,6 +30,8 @@ use crate::schema::{
     components(schemas(
         ApiErrorCode,
         ApiErrorDetailDto,
+        ApiErrorDetailPayloadDto,
+        ApiErrorIssueDto,
         ApiErrorResponseDto,
         DatasetChangeDetailDto,
         DatasetChangeEventDto,
@@ -47,6 +50,7 @@ use crate::schema::{
         NearbyStationsQueryDto,
         NearbyStationsResponseDto,
         OperatorStationsResponseDto,
+        ReadinessDatasetDto,
         ReadinessResponseDto,
         StationSearchResponseDto,
         StationSummaryDto

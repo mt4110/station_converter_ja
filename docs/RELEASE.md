@@ -7,9 +7,17 @@ GitHub Release asset まで載せるための導線です。
 
 ## Official path
 
-1. primary write DB を最新化する
-2. release に使う tag を決めて push する
-3. `scripts/publish_sqlite_release.sh` で SQLite bundle を生成して GitHub Release に upload する
+まず [`docs/RELEASE_CHECKLIST.md`](./RELEASE_CHECKLIST.md) で stop condition を確認します。
+公開手段は次の 3 つです。
+
+1. local candidate bundle だけ作る
+2. `v*` tag push で GitHub Actions に publish させる
+3. clean な tagged checkout から `scripts/publish_sqlite_release.sh` で手動 publish する
+
+通常の public release は tag push workflow を使います。
+手元の publish script は、workflow の再現や失敗した upload の修復用にも使えます。
+
+手元から publish する場合の command は次です。
 
 PostgreSQL を primary write にしている場合は次です。
 
@@ -46,13 +54,13 @@ MySQL を primary write にしている場合は次です。
 GitHub Release へはまだ上げず、ローカルで bundle だけ作りたい場合は従来どおり次です。
 
 ```bash
-./scripts/release_sqlite_artifact.sh postgres
+./scripts/release_sqlite_artifact.sh postgres v0.1.4
 ```
 
 MySQL の場合:
 
 ```bash
-./scripts/release_sqlite_artifact.sh mysql
+./scripts/release_sqlite_artifact.sh mysql v0.1.4
 ```
 
 ## Tag discipline
@@ -140,6 +148,17 @@ real-time railway data ではありません。
 
 pull request から release publish はしません。
 
+release 当日の最短導線は次です。
+
+```bash
+TAG=v0.1.4
+git tag -a "$TAG" -m "$TAG"
+git push origin "$TAG"
+```
+
+workflow を使わずに手元から publish する場合は、clean な working tree と
+`HEAD == TAG` を満たしてから実行します。
+
 ## CI / local verification
 
 主要経路の確認は次で揃います。
@@ -149,6 +168,15 @@ pull request から release publish はしません。
 ./scripts/verify_ingest_export.sh postgres
 ./scripts/verify_ingest_export.sh mysql
 cd frontend && npm ci && npm run build
+```
+
+release database では、publish candidate を refresh / validate / parity check します。
+
+```bash
+cargo run -p station-ops -- job refresh-n02 --export-sqlite
+cargo run -p station-ops -- validate-ingest --strict --json
+cargo run -p station-ops -- verify-sqlite-parity
+./scripts/verify_sqlite_reproducibility.sh
 ```
 
 `verify_ingest_export.sh` は repo 内の小さな N02 fixture を ZIP 化して使うので、

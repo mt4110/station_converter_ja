@@ -9,7 +9,10 @@ use axum::{
 use serde::de::DeserializeOwned;
 use tracing::error;
 
-use crate::schema::{ApiErrorCode, ApiErrorDetailDto, ApiErrorResponseDto};
+use crate::schema::{
+    ApiErrorCode, ApiErrorDetailDto, ApiErrorDetailPayloadDto, ApiErrorIssueDto,
+    ApiErrorResponseDto,
+};
 
 pub type ApiResult<T> = Result<Json<T>, ApiError>;
 
@@ -21,10 +24,18 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn invalid_request(message: impl Into<String>) -> Self {
-        Self::new(
+        let message = message.into();
+        Self::new_with_detail(
             StatusCode::BAD_REQUEST,
             ApiErrorCode::InvalidRequest,
-            message,
+            message.clone(),
+            Some(ApiErrorDetailPayloadDto {
+                kind: "query_parameters".to_string(),
+                issues: vec![ApiErrorIssueDto {
+                    field: None,
+                    message,
+                }],
+            }),
         )
     }
 
@@ -43,12 +54,22 @@ impl ApiError {
     }
 
     fn new(status: StatusCode, code: ApiErrorCode, message: impl Into<String>) -> Self {
+        Self::new_with_detail(status, code, message, None)
+    }
+
+    fn new_with_detail(
+        status: StatusCode,
+        code: ApiErrorCode,
+        message: impl Into<String>,
+        detail: Option<ApiErrorDetailPayloadDto>,
+    ) -> Self {
         Self {
             status,
             body: ApiErrorResponseDto {
                 error: ApiErrorDetailDto {
                     code,
                     message: message.into(),
+                    detail,
                 },
             },
         }

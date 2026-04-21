@@ -29,8 +29,8 @@ use crate::{
         DatasetSnapshotsResponseDto, DatasetStatusResponseDto, HealthResponseDto,
         LineCatalogItemDto, LineCatalogParams, LineCatalogResponseDto, LineStationsParams,
         LineStationsResponseDto, NearbyParams, NearbyStationsQueryDto, NearbyStationsResponseDto,
-        OperatorStationsResponseDto, ReadinessResponseDto, SearchParams, StationSearchResponseDto,
-        StationSummaryDto,
+        OperatorStationsResponseDto, ReadinessDatasetDto, ReadinessResponseDto, SearchParams,
+        StationSearchResponseDto, StationSummaryDto,
     },
 };
 
@@ -134,25 +134,85 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         .execute(&state.pool)
         .await
     {
-        Ok(_) => Json(ReadinessResponseDto {
-            status: "ready".to_string(),
-            database_type: state.config.database_type.to_string(),
-            cache: cache.to_string(),
-        })
-        .into_response(),
+        Ok(_) => {
+            let dataset = readiness_dataset_summary(&state)
+                .await
+                .unwrap_or_else(|err| {
+                    error!(error = ?err, "dataset readiness summary failed");
+                    unknown_readiness_dataset()
+                });
+            Json(readiness_response(&state, "ready", cache, dataset)).into_response()
+        }
         Err(err) => {
             error!(error = %err, "database readiness check failed");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(ReadinessResponseDto {
-                    status: "not_ready".to_string(),
-                    database_type: state.config.database_type.to_string(),
-                    cache: cache.to_string(),
-                }),
+                Json(readiness_response(
+                    &state,
+                    "not_ready",
+                    cache,
+                    unknown_readiness_dataset(),
+                )),
             )
                 .into_response()
         }
     }
+}
+
+fn readiness_response(
+    state: &AppState,
+    status: &str,
+    cache: &str,
+    dataset: ReadinessDatasetDto,
+) -> ReadinessResponseDto {
+    ReadinessResponseDto {
+        status: status.to_string(),
+        database_type: state.config.database_type.to_string(),
+        cache: cache.to_string(),
+        dataset,
+    }
+}
+
+fn unknown_readiness_dataset() -> ReadinessDatasetDto {
+    ReadinessDatasetDto {
+        status: "unknown".to_string(),
+        active_station_count: None,
+        active_snapshot_id: None,
+    }
+}
+
+async fn readiness_dataset_summary(state: &AppState) -> Result<ReadinessDatasetDto, ApiError> {
+    let station_uid_scope =
+        prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len());
+    let count_expr = integer_aggregate_sql(state.dialect, "COUNT(*)");
+    let sql = format!(
+        "SELECT
+           {count_expr} AS active_station_count,
+           MAX(snapshot_id) AS active_snapshot_id
+         FROM stations_latest
+         WHERE {station_uid_scope}",
+    );
+    let row = sqlx::query(&state.dialect.statement(&sql))
+        .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
+        .fetch_one(&state.pool)
+        .await
+        .map_err(internal_error)?;
+    let active_station_count = row
+        .try_get::<i64, _>("active_station_count")
+        .map_err(internal_error)?;
+    let active_snapshot_id = row
+        .try_get::<Option<i64>, _>("active_snapshot_id")
+        .map_err(internal_error)?;
+
+    Ok(ReadinessDatasetDto {
+        status: if active_station_count >= FULL_DATASET_MIN_STATION_COUNT {
+            "ready".to_string()
+        } else {
+            "needs_ingest".to_string()
+        },
+        active_station_count: Some(active_station_count),
+        active_snapshot_id,
+    })
 }
 
 #[utoipa::path(
@@ -1135,6 +1195,8 @@ mod tests {
 
         let ready = json_body(app.clone().oneshot(get("/ready")).await.unwrap()).await;
         assert_eq!(ready["status"].as_str(), Some("ready"));
+        assert_eq!(ready["dataset"]["status"].as_str(), Some("needs_ingest"));
+        assert_eq!(ready["dataset"]["active_station_count"].as_i64(), Some(1));
 
         let dataset = json_body(
             app.clone()
@@ -1208,6 +1270,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openapi_json_excludes_frontend_helper_routes() {
+        let app = app(test_state(test_pool().await));
+        let response = app.oneshot(get("/openapi.json")).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = json_body(response).await;
+        let paths = body["paths"].as_object().unwrap();
+
+        assert!(!paths.contains_key("/api/address-search"));
+    }
+
+    #[tokio::test]
     async fn openapi_json_documents_line_catalog_limit_up_to_1000() {
         let app = app(test_state(test_pool().await));
         let response = app.oneshot(get("/openapi.json")).await.unwrap();
@@ -1225,6 +1300,76 @@ mod tests {
 
         assert_eq!(limit["schema"]["minimum"].as_i64(), Some(1));
         assert_eq!(limit["schema"]["maximum"].as_i64(), Some(1000));
+    }
+
+    #[tokio::test]
+    async fn openapi_json_documents_history_and_error_contract() {
+        let app = app(test_state(test_pool().await));
+        let response = app.oneshot(get("/openapi.json")).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = json_body(response).await;
+        let schemas = body["components"]["schemas"].as_object().unwrap();
+
+        assert_eq!(
+            schemas["ApiErrorResponseDto"]["properties"]["error"]["description"].as_str(),
+            Some("Standard error envelope for public station-api endpoints.")
+        );
+        assert!(schemas.contains_key("ApiErrorDetailPayloadDto"));
+        assert!(schemas.contains_key("ApiErrorIssueDto"));
+        assert_eq!(
+            schemas["ApiErrorDetailPayloadDto"]["properties"]["kind"]["description"].as_str(),
+            Some("Stable category for the detail payload.")
+        );
+        assert_eq!(
+            schemas["ApiErrorDetailPayloadDto"]["properties"]["issues"]["description"].as_str(),
+            Some("One or more issues associated with the error.")
+        );
+        assert_eq!(
+            schemas["ReadinessResponseDto"]["properties"]["dataset"]["description"].as_str(),
+            Some("Dataset readiness summary for the canonical N02 station rows.")
+        );
+        let active_snapshot = &schemas["DatasetStatusResponseDto"]["properties"]["active_snapshot"];
+        let active_snapshot_description = active_snapshot["description"].as_str().or_else(|| {
+            active_snapshot["oneOf"].as_array().and_then(|schemas| {
+                schemas
+                    .iter()
+                    .find_map(|schema| schema["description"].as_str())
+            })
+        });
+        assert_eq!(
+            active_snapshot_description,
+            Some("Latest ingested N02 source snapshot metadata, when one exists.")
+        );
+        assert_eq!(
+            schemas["DatasetChangeEventDto"]["properties"]["detail"]["description"].as_str(),
+            Some("Structured before/after context for consumers that need field-level diffs.")
+        );
+
+        let snapshot_parameters = body["paths"]["/v1/dataset/snapshots"]["get"]["parameters"]
+            .as_array()
+            .unwrap();
+        let snapshot_limit = snapshot_parameters
+            .iter()
+            .find(|parameter| parameter["name"].as_str() == Some("limit"))
+            .unwrap();
+        assert_eq!(
+            snapshot_limit["description"].as_str(),
+            Some("Maximum number of recent N02 source snapshots to return.")
+        );
+
+        let change_parameters = body["paths"]["/v1/dataset/changes"]["get"]["parameters"]
+            .as_array()
+            .unwrap();
+        let snapshot_id = change_parameters
+            .iter()
+            .find(|parameter| parameter["name"].as_str() == Some("snapshot_id"))
+            .unwrap();
+        assert_eq!(
+            snapshot_id["description"].as_str(),
+            Some("Optional source snapshot id to filter change events.")
+        );
     }
 
     #[tokio::test]
@@ -1259,6 +1404,13 @@ mod tests {
         let body = json_body(response).await;
         assert_eq!(body["error"]["code"].as_str(), Some("invalid_request"));
         assert!(body["error"]["message"].as_str().is_some());
+        assert_eq!(
+            body["error"]["detail"]["kind"].as_str(),
+            Some("query_parameters")
+        );
+        assert!(body["error"]["detail"]["issues"][0]["message"]
+            .as_str()
+            .is_some());
     }
 
     #[tokio::test]

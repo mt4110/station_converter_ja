@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  echo "usage: $0 [postgres|mysql] [release-version]" >&2
+  echo "example: $0 postgres v0.1.4" >&2
+}
+
 DB_TYPE="${1:-${DATABASE_TYPE:-postgres}}"
 RELEASE_VERSION="${2:-}"
 
@@ -8,7 +13,7 @@ case "$DB_TYPE" in
   postgres|mysql)
     ;;
   *)
-    echo "usage: $0 [postgres|mysql]" >&2
+    usage
     exit 1
     ;;
 esac
