@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "usage: $0 [postgres|mysql] <release-tag>" >&2
-  echo "example: $0 postgres v0.1.1" >&2
+  echo "example: $0 postgres v0.1.4" >&2
 }
 
 DB_TYPE="${1:-}"

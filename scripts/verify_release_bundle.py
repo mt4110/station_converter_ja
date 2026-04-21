@@ -28,6 +28,15 @@ REQUIRED_MANIFEST_KEYS = [
     "row_counts",
 ]
 
+REQUIRED_CONSUMER_VERIFICATION_TEXT = [
+    "gh release download",
+    "shasum -a 256 -c checksums.txt",
+    "gh attestation verify stations.sqlite3",
+    "--predicate-type https://spdx.dev/Document/v2.3",
+    "latest available MLIT N02 snapshot",
+    "real-time railway data",
+]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify a generated SQLite release bundle.")
@@ -66,6 +75,7 @@ def main() -> int:
         raise SystemExit("SBOM.spdx.json must declare SPDX-2.3")
 
     verify_checksums(bundle_dir / "checksums.txt", bundle_dir)
+    verify_consumer_docs(bundle_dir)
 
     summary = {
         "bundle_dir": str(bundle_dir),
@@ -100,6 +110,14 @@ def verify_checksums(checksums_path: Path, bundle_dir: Path) -> None:
             raise SystemExit(
                 f"checksum mismatch for {target.name}: expected {expected_hash}, got {actual_hash}"
             )
+
+
+def verify_consumer_docs(bundle_dir: Path) -> None:
+    for file_name in ["RELEASE_NOTES.md", "README_SQLITE.md"]:
+        text = (bundle_dir / file_name).read_text(encoding="utf-8")
+        for required_text in REQUIRED_CONSUMER_VERIFICATION_TEXT:
+            if required_text not in text:
+                raise SystemExit(f"{file_name} missing consumer verification text: {required_text}")
 
 
 def sha256_file(path: Path) -> str:

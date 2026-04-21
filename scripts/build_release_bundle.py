@@ -379,11 +379,12 @@ def render_release_notes(
 ) -> str:
     row_counts = manifest["row_counts"]
     snapshot_counts = manifest["snapshot_counts"]
-    verify_hint = (
-        f"gh attestation verify stations.sqlite3 -R {git_repo_slug}"
-        if git_repo_slug
-        else "gh attestation verify stations.sqlite3 -R <owner/repo>"
+    repo_hint = git_repo_slug or "<owner/repo>"
+    verification_commands = render_consumer_verification_commands(
+        release_version=release_version,
+        repo_hint=repo_hint,
     )
+    verification_block = textwrap.indent(verification_commands, "        ")
 
     return textwrap.dedent(
         f"""
@@ -430,9 +431,11 @@ def render_release_notes(
         ## Verification
 
         ```bash
-        sha256sum -c checksums.txt
-        {verify_hint}
+{verification_block}
         ```
+
+        This artifact represents the latest available MLIT N02 snapshot included
+        in this release. It is not real-time railway data.
         """
     ).strip()
 
@@ -443,12 +446,13 @@ def render_readme_sqlite(
     manifest: Dict[str, Any],
     git_repo_slug: Optional[str],
 ) -> str:
-    verify_hint = (
-        f"gh attestation verify stations.sqlite3 -R {git_repo_slug}"
-        if git_repo_slug
-        else "gh attestation verify stations.sqlite3 -R <owner/repo>"
-    )
+    repo_hint = git_repo_slug or "<owner/repo>"
     source_version = manifest["source_version"] or "unknown"
+    verification_commands = render_consumer_verification_commands(
+        release_version=release_version,
+        repo_hint=repo_hint,
+    )
+    verification_block = textwrap.indent(verification_commands, "        ")
 
     return textwrap.dedent(
         f"""
@@ -461,11 +465,10 @@ def render_readme_sqlite(
         - source_version: `{source_version}`
         - git_commit: `{manifest["git_commit"]}`
 
-        まずは次で検証できます。
+        GitHub Release から取得して検証する場合:
 
         ```bash
-        sha256sum -c checksums.txt
-        {verify_hint}
+{verification_block}
         ```
 
         SQLite を開く例:
@@ -485,6 +488,31 @@ def render_readme_sqlite(
         ```
 
         provenance と source metadata は `manifest.json` と `SOURCE_METADATA.json` を参照してください。
+        この artifact は latest available MLIT N02 snapshot の配布物であり、real-time railway data ではありません。
+        """
+    ).strip()
+
+
+def render_consumer_verification_commands(*, release_version: str, repo_hint: str) -> str:
+    return textwrap.dedent(
+        f"""
+        REPO="{repo_hint}"
+        TAG="{release_version}"
+        mkdir -p "tmp/release-${{TAG}}"
+        gh release download "$TAG" -R "$REPO" -D "tmp/release-${{TAG}}" --clobber \\
+          -p stations.sqlite3 \\
+          -p manifest.json \\
+          -p SOURCE_METADATA.json \\
+          -p checksums.txt \\
+          -p CHANGELOG.md \\
+          -p RELEASE_NOTES.md \\
+          -p README_SQLITE.md \\
+          -p SBOM.spdx.json
+        cd "tmp/release-${{TAG}}"
+        shasum -a 256 -c checksums.txt
+        gh attestation verify stations.sqlite3 -R "$REPO"
+        gh attestation verify stations.sqlite3 -R "$REPO" \\
+          --predicate-type https://spdx.dev/Document/v2.3
         """
     ).strip()
 
