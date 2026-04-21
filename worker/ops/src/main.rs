@@ -23,6 +23,12 @@ use validate_ingest::{render_validation_report, validate_ingest, ValidateIngestA
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/postgres");
 static MYSQL_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/mysql");
 static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("../../storage/migrations/sqlite");
+const VERIFY_RESET_TABLES: [&str; 4] = [
+    "station_change_events",
+    "station_versions",
+    "station_identities",
+    "source_snapshots",
+];
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -148,14 +154,32 @@ async fn reset_verify_db(config: &AppConfig, yes: bool) -> Result<()> {
             let pool = MySqlPoolOptions::new()
                 .connect(&config.database_url)
                 .await?;
-            for statement in [
-                "DELETE FROM station_change_events",
-                "DELETE FROM station_versions",
-                "DELETE FROM station_identities",
-                "DELETE FROM source_snapshots",
-            ] {
-                sqlx::query(statement).execute(&pool).await?;
+            let mut conn = pool.acquire().await?;
+
+            // Use TRUNCATE so verification reruns start from deterministic AUTO_INCREMENT values.
+            sqlx::query("SET FOREIGN_KEY_CHECKS = 0")
+                .execute(&mut *conn)
+                .await?;
+
+            let reset_result = async {
+                for table in VERIFY_RESET_TABLES {
+                    let statement = format!("TRUNCATE TABLE {table}");
+                    sqlx::query(&statement).execute(&mut *conn).await?;
+                }
+                Ok::<(), sqlx::Error>(())
             }
+            .await;
+
+            let restore_result = sqlx::query("SET FOREIGN_KEY_CHECKS = 1")
+                .execute(&mut *conn)
+                .await;
+
+            if let Err(error) = reset_result {
+                restore_result?;
+                return Err(error.into());
+            }
+
+            restore_result?;
         }
         DatabaseType::Sqlite => {
             bail!("reset-verify-db is only supported for postgres or mysql");

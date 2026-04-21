@@ -829,9 +829,9 @@ export interface operations {
     line_catalog: {
         parameters: {
             query?: {
-                /** @example 新宿 */
+                /** @example 中央 */
                 q?: string;
-                /** @example 10 */
+                /** @example 60 */
                 limit?: number;
             };
             header?: never;

@@ -27,8 +27,8 @@ use crate::{
         DatasetChangesParams, DatasetChangesResponseDto, DatasetSnapshotChangeCountsDto,
         DatasetSnapshotDto, DatasetSnapshotRefDto, DatasetSnapshotsParams,
         DatasetSnapshotsResponseDto, DatasetStatusResponseDto, HealthResponseDto,
-        LineCatalogItemDto, LineCatalogResponseDto, LineStationsParams, LineStationsResponseDto,
-        NearbyParams, NearbyStationsQueryDto, NearbyStationsResponseDto,
+        LineCatalogItemDto, LineCatalogParams, LineCatalogResponseDto, LineStationsParams,
+        LineStationsResponseDto, NearbyParams, NearbyStationsQueryDto, NearbyStationsResponseDto,
         OperatorStationsResponseDto, ReadinessResponseDto, SearchParams, StationSearchResponseDto,
         StationSummaryDto,
     },
@@ -667,7 +667,7 @@ async fn nearby_stations(
     get,
     path = "/v1/lines/catalog",
     tag = "station-api",
-    params(SearchParams),
+    params(LineCatalogParams),
     responses(
         (status = 200, description = "Line catalog search results.", body = LineCatalogResponseDto),
         (status = 400, description = "Invalid query parameters.", body = ApiErrorResponseDto),
@@ -676,7 +676,7 @@ async fn nearby_stations(
 )]
 async fn line_catalog(
     State(state): State<AppState>,
-    ApiQuery(params): ApiQuery<SearchParams>,
+    ApiQuery(params): ApiQuery<LineCatalogParams>,
 ) -> ApiResult<LineCatalogResponseDto> {
     let query = params.q.unwrap_or_default().trim().to_string();
     let limit = normalized_catalog_limit(params.limit);
@@ -970,7 +970,8 @@ mod tests {
         map_anyhow_to_sqlx_error, nullable_integer_aggregate_sql, operator_stations,
         search_stations, text_equals_sql, text_group_sql, text_like_sql, text_order_sql, ApiQuery,
         AppState, DatasetChangeKindDto, DatasetChangesParams, DatasetSnapshotsParams,
-        LineStationsParams, SearchParams, N02_SOURCE_NAME, N02_STATION_UID_PREFIX,
+        LineCatalogParams, LineStationsParams, SearchParams, N02_SOURCE_NAME,
+        N02_STATION_UID_PREFIX,
     };
 
     #[test]
@@ -1204,6 +1205,26 @@ mod tests {
         ] {
             assert!(paths.contains_key(path), "missing path {path}");
         }
+    }
+
+    #[tokio::test]
+    async fn openapi_json_documents_line_catalog_limit_up_to_1000() {
+        let app = app(test_state(test_pool().await));
+        let response = app.oneshot(get("/openapi.json")).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = json_body(response).await;
+        let parameters = body["paths"]["/v1/lines/catalog"]["get"]["parameters"]
+            .as_array()
+            .unwrap();
+        let limit = parameters
+            .iter()
+            .find(|parameter| parameter["name"].as_str() == Some("limit"))
+            .unwrap();
+
+        assert_eq!(limit["schema"]["minimum"].as_i64(), Some(1));
+        assert_eq!(limit["schema"]["maximum"].as_i64(), Some(1000));
     }
 
     #[tokio::test]
@@ -1671,7 +1692,7 @@ mod tests {
 
         let response = line_catalog(
             State(test_state(pool)),
-            ApiQuery::new(SearchParams {
+            ApiQuery::new(LineCatalogParams {
                 q: Some("江".to_string()),
                 limit: Some(10),
             }),
@@ -1727,7 +1748,7 @@ mod tests {
 
         let response = line_catalog(
             State(test_state(pool)),
-            ApiQuery::new(SearchParams {
+            ApiQuery::new(LineCatalogParams {
                 q: Some("中央".to_string()),
                 limit: Some(10),
             }),

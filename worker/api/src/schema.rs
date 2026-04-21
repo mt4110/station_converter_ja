@@ -14,6 +14,15 @@ pub struct SearchParams {
 
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
+pub struct LineCatalogParams {
+    #[param(example = "中央")]
+    pub q: Option<String>,
+    #[param(example = 60, minimum = 1, maximum = 1000)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct NearbyParams {
     #[param(example = 35.6812)]
     pub lat: f64,
