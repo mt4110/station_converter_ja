@@ -10,6 +10,8 @@
 ## Current State
 
 2026-04-21 時点で、OpenAPI first pass は完了しています。
+現在は読み物としての同期を進め、generated OpenAPI に
+dataset history / change detail の field-level description を追加します。
 
 - `worker/api` の route annotation / DTO から `/openapi.json` を自動生成できる
 - `/docs` で Swagger UI を公開している
@@ -57,6 +59,26 @@ machine-readable source of truth は `worker/api` にあります。
 `station-api` の public contract ではないため、
 OpenAPI / generated station SDK の対象外に置く判断を維持します。
 
+## Reading Dataset History
+
+`/v1/dataset/status`、`/v1/dataset/snapshots`、`/v1/dataset/changes` は同じ N02 snapshot history を別の粒度で見ます。
+
+- `/v1/dataset/status`: 今 API / sample frontend が使う `stations_latest` の概要
+- `/v1/dataset/snapshots`: 取り込んだ source snapshot の履歴。newest first
+- `/v1/dataset/changes`: station identity 単位の change events。newest first
+
+`snapshots.items[].id` は `changes?snapshot_id=...` に渡せます。
+`station_version_count` と `change_counts` は N02 station identity に scope されます。
+`downloaded_at` と `created_at` は active database dialect が返す timestamp string で、
+v1 では RFC3339 正規化していません。
+この API が言える freshness は latest available MLIT N02 snapshot であり、
+real-time railway data ではありません。
+
+`changes.items[].detail` は consumer が field-level diff を読むための payload です。
+現在の detail payload では、`updated` が `before` / `after` と `changed_fields` を持ちます。
+`created` / `removed` は flat context fields を持つため、top-level context fields も fallback として扱います。
+一覧 UI は top-level の `station_name` / `line_name` / `operator_name` だけでも表示できます。
+
 ## Design Decisions That Stay
 
 ### Library Choice
@@ -93,17 +115,20 @@ public API DTO は `worker/api` に閉じます。
 
 - example、文言、error note を generated contract と合わせ続ける
 - `/openapi.json` と `/docs` が canonical reference であることを docs 側でも明確にする
+- generated OpenAPI の field description と `API_SPEC.md` の説明を同じ意味に保つ
 
 ### 2. snapshots / changes の説明強化
 
 - `/v1/dataset/snapshots` と `/v1/dataset/changes` 自体はもう public endpoint である
-- 残りは、snapshot history と change detail を利用者がどう読むかの説明を磨くこと
+- 説明は「source snapshot の履歴」と「station identity の差分イベント」を混ぜない
+- examples は count 固定に寄りすぎず、shape と読み方を示す
 
 ### 3. error detail 標準化
 
 - 現状の共通 envelope は `error.code` / `error.message`
 - field-level あるいは machine-readable detail が必要なら、non-breaking に optional `detail` を足す
 - ここは OpenAPI と [`API_SPEC.md`](../API_SPEC.md) を同時更新する
+- optional `detail` はまだ追加しない。まず current envelope を明文化する
 
 ### 4. hand-written endpoint 境界の明記
 
@@ -118,8 +143,8 @@ public API DTO は `worker/api` に閉じます。
 ## Next Execution Order
 
 1. `API_SPEC.md` と README の文言を generated contract に合わせ続ける
-2. `ApiErrorResponseDto` に optional `detail` が必要かを決める
-3. snapshots / changes の example を count 固定に寄りすぎない形で整える
+2. snapshots / changes の example を count 固定に寄りすぎない形で整える
+3. `ApiErrorResponseDto` に optional `detail` が必要かを、実需要が出た時点で決める
 4. `generate:station-sdk` / `verify:station-sdk` / CI wiring を green のまま保つ
 
 ## Done Enough
