@@ -141,8 +141,8 @@
     },
     {
       "command": "cargo run -p station-ops -- job ingest-n02{ingest_suffix}",
-      "description": "Run the official one-shot ingest. --export-sqlite is accepted for the future artifact path, but export itself is still scaffolded.",
-      "description_ja": "公式の one-shot ingest を実行します。--export-sqlite は将来の artifact 導線用に受け付けますが、export 自体はまだ scaffold 段階です。",
+      "description": "Run the official one-shot ingest. With --export-sqlite, export the refreshed data to the read-only SQLite artifact.",
+      "description_ja": "公式の one-shot ingest を実行します。--export-sqlite 付きでは、更新後のデータを read-only SQLite artifact へ export します。",
       "detail_lines": [
         "Selected DB mode: {db_label}"
       ],

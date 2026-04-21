@@ -22,13 +22,13 @@ GitHub Release asset まで載せるための導線です。
 PostgreSQL を primary write にしている場合は次です。
 
 ```bash
-./scripts/publish_sqlite_release.sh postgres v0.1.4
+./scripts/publish_sqlite_release.sh postgres v0.1.5
 ```
 
 MySQL を primary write にしている場合は次です。
 
 ```bash
-./scripts/publish_sqlite_release.sh mysql v0.1.4
+./scripts/publish_sqlite_release.sh mysql v0.1.5
 ```
 
 この script は次をまとめて行います。
@@ -47,20 +47,20 @@ MySQL を primary write にしている場合は次です。
 - tag が remote に push 済みであること
 - 公開済み tag を載せ替えず、新しい patch tag を使うこと
 
-上の例は、最新 tag が `v0.1.3` の状態から `v0.1.4` を切る想定です。
+上の例は、最新 tag が `v0.1.4` の状態から `v0.1.5` を切る想定です。
 
 ## Local-only bundle
 
 GitHub Release へはまだ上げず、ローカルで bundle だけ作りたい場合は従来どおり次です。
 
 ```bash
-./scripts/release_sqlite_artifact.sh postgres v0.1.4
+./scripts/release_sqlite_artifact.sh postgres v0.1.5
 ```
 
 MySQL の場合:
 
 ```bash
-./scripts/release_sqlite_artifact.sh mysql v0.1.4
+./scripts/release_sqlite_artifact.sh mysql v0.1.5
 ```
 
 ## Tag discipline
@@ -151,7 +151,7 @@ pull request から release publish はしません。
 release 当日の最短導線は次です。
 
 ```bash
-TAG=v0.1.4
+TAG=v0.1.5
 git tag -a "$TAG" -m "$TAG"
 git push origin "$TAG"
 ```

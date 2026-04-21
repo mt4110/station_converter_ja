@@ -1,29 +1,28 @@
 # ROADMAP
 
-## 2026-04-21 時点の整理
+## 2026-04-22 時点の整理
 
-PR #2 までで、この repo はもう空箱ではありません。
+`v0.1.4` までで、この repo はもう空箱ではありません。
 `station-ops job ingest-n02` による ingest、`validate-ingest`、SQLite export、`station-api`、
-example frontend、self-hosted の運用導線まで揃っています。
+example frontend、self-hosted の運用導線、検証可能な SQLite release artifact まで揃っています。
 
 一方で、次の価値は「機能をさらに増やすこと」より、
-**利用者が安心して受け取って使える状態を仕上げること**にあります。
+**release 後の品質ゲートと配布体験を太くすること**にあります。
 
 ## 結論: 次はこの順番
 
-1. Release と配布物の信頼性を完成させる
-2. OpenAPI contract の仕上げをする
-3. ingest 速度ではなく、検知 -> 公開速度を上げる
-4. データ品質ゲートを product-grade にする
-5. README から迷わず辿れる docs 導線を作る
+1. データ品質ゲートを product-grade にする
+2. ingest 速度ではなく、検知 -> 公開速度を上げる
+3. release 後の consumer verification をさらに短くする
+4. OpenAPI contract を読み違えない状態で保守する
+5. 配布先と運用の選択肢を少しずつ増やす
 
 ## 1. Release と配布物の信頼性を完成させる
 
-### なぜ最優先か
+### 現在の状態
 
-今の repo には verified tag `v0.1.0` があります。
-それ自体は強いです。
-ただし、利用者視点では「落として検証して使える release product」はまだ完成していません。
+`v0.1.4` で、利用者が GitHub Release から SQLite artifact を落として検証できる
+release product は成立しました。
 
 ### いま出来ていること
 
@@ -41,18 +40,18 @@ example frontend、self-hosted の運用導線まで揃っています。
   - `SBOM.spdx.json`
 - `v*` tag push 用の GitHub Release workflow がある
 - `stations.sqlite3` の provenance attestation と SBOM attestation に対応した
+- `v0.1.4` GitHub Release に release asset を公開済み
+- consumer-side checksum / provenance attestation / SBOM attestation verification を確認済み
 
-### 残る operational task
+### 残る polish
 
-- 新しい patch tag を切って GitHub Release を publish する
-- release asset を実際の public release page に載せる
 - `gh attestation verify` を使う consumer-side verification 導線を README / docs からさらに短くする
 - 必要なら `v0.1.0` を backfill するのではなく、`v0.1.x` の新 tag で前に進める
 
 ### 重要な運用メモ
 
 現行の `scripts/publish_sqlite_release.sh` は **tag が現在の `HEAD` と一致すること**を要求します。
-2026-04-20 時点では `v0.1.0` は現在の `main` より前の commit を向いています。
+`v0.1.0` は現在の `main` より前の commit を向いています。
 
 したがって安全な進め方は次のどちらかです。
 
@@ -252,12 +251,12 @@ canonical export に急いで混ぜないこと。
 
 ### v0.1.x: usable release
 
-- GitHub Release を完成させる
-- SQLite artifact bundle を添付する
-- manifest / checksum / source metadata を添付する
-- README に download / verify path を載せる
-- `docs/ARTIFACTS.md`
-- `docs/DATA_LICENSE.md`
+- [x] GitHub Release を完成させる
+- [x] SQLite artifact bundle を添付する
+- [x] manifest / checksum / source metadata を添付する
+- [x] README に download / verify path を載せる
+- [x] `docs/ARTIFACTS.md`
+- [x] `docs/DATA_LICENSE.md`
 
 ### v0.2.0: API contract first pass
 

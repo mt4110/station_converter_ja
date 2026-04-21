@@ -143,12 +143,12 @@ Build a distributable SQLite bundle:
 Publish the SQLite bundle to a GitHub Release:
 
 ```bash
-./scripts/publish_sqlite_release.sh postgres v0.1.4
+./scripts/publish_sqlite_release.sh postgres v0.1.5
 ```
 
 Outputs are written to `artifacts/sqlite/`. Do not move an already published tag;
-publish the hardened assets with a new patch tag. This example assumes `v0.1.3`
-is currently the latest tag and the next patch tag is `v0.1.4`.
+publish the hardened assets with a new patch tag. This example assumes `v0.1.4`
+is currently the latest tag and the next patch tag is `v0.1.5`.
 
 Fast consumer-side verification for a published release:
 

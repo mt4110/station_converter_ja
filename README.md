@@ -242,12 +242,12 @@ SQLite artifact を配布物として固める:
 GitHub Release までまとめて公開する:
 
 ```bash
-./scripts/publish_sqlite_release.sh postgres v0.1.4
+./scripts/publish_sqlite_release.sh postgres v0.1.5
 ```
 
 配布物は `artifacts/sqlite/` に出力されます。公開済み tag は載せ替えず、
-次の patch tag で進めます。上の例は、最新 tag が `v0.1.3` の状態から
-`v0.1.4` を切る想定です。
+次の patch tag で進めます。上の例は、最新 tag が `v0.1.4` の状態から
+`v0.1.5` を切る想定です。
 
 公開済み release を利用者側で検証する最短経路:
 

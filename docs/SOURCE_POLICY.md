@@ -3,6 +3,7 @@
 ## Canonical source
 
 v1 canonical source is MLIT / 国土数値情報 `N02`.
+For the consumer-facing artifact license summary, see [DATA_LICENSE.md](./DATA_LICENSE.md).
 
 Why:
 
