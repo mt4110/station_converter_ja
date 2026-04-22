@@ -18,6 +18,7 @@ use crate::schema::{
     paths(
         crate::health,
         crate::ready,
+        crate::metrics,
         crate::dataset_status,
         crate::dataset_snapshots,
         crate::dataset_changes,

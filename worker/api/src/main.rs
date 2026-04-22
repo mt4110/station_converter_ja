@@ -4,7 +4,7 @@ mod schema;
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -50,6 +50,7 @@ fn app(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route("/metrics", get(metrics))
         .route("/v1/dataset/status", get(dataset_status))
         .route("/v1/dataset/snapshots", get(dataset_snapshots))
         .route("/v1/dataset/changes", get(dataset_changes))
@@ -157,6 +158,142 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
                 .into_response()
         }
     }
+}
+
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    tag = "station-api",
+    responses(
+        (status = 200, description = "Prometheus metrics in text exposition format.", content_type = "text/plain", body = String)
+    )
+)]
+async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+    let dataset = match fetch_metrics_dataset_summary(&state).await {
+        Ok(dataset) => Some(dataset),
+        Err(err) => {
+            error!(error = ?err, "metrics dataset summary failed");
+            None
+        }
+    };
+
+    (
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        render_prometheus_metrics(&state, dataset.as_ref()),
+    )
+}
+
+#[derive(Debug)]
+struct MetricsDatasetSummary {
+    active_station_count: i64,
+    distinct_station_name_count: i64,
+    distinct_line_count: i64,
+    active_version_snapshot_count: i64,
+    latest_snapshot_id: i64,
+}
+
+async fn fetch_metrics_dataset_summary(
+    state: &AppState,
+) -> Result<MetricsDatasetSummary, ApiError> {
+    let n02_where_clause = format!(
+        "WHERE {}",
+        prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len())
+    );
+    let sql = format!(
+        "SELECT
+           {} AS active_station_count,
+           {} AS distinct_station_name_count,
+           {} AS distinct_line_count,
+           {} AS active_version_snapshot_count,
+           {} AS latest_snapshot_id
+         FROM stations_latest
+         {n02_where_clause}",
+        integer_aggregate_sql(state.dialect, "COUNT(*)"),
+        integer_aggregate_sql(
+            state.dialect,
+            &distinct_text_count_sql(state.dialect, "station_name"),
+        ),
+        integer_aggregate_sql(
+            state.dialect,
+            &distinct_text_count_sql(state.dialect, "line_name"),
+        ),
+        integer_aggregate_sql(state.dialect, "COUNT(DISTINCT snapshot_id)"),
+        integer_aggregate_sql(state.dialect, "MAX(snapshot_id)"),
+    );
+    let row = sqlx::query(&state.dialect.statement(&sql))
+        .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
+        .fetch_one(&state.pool)
+        .await
+        .map_err(internal_error)?;
+
+    Ok(MetricsDatasetSummary {
+        active_station_count: row
+            .try_get::<i64, _>("active_station_count")
+            .map_err(internal_error)?,
+        distinct_station_name_count: row
+            .try_get::<i64, _>("distinct_station_name_count")
+            .map_err(internal_error)?,
+        distinct_line_count: row
+            .try_get::<i64, _>("distinct_line_count")
+            .map_err(internal_error)?,
+        active_version_snapshot_count: row
+            .try_get::<i64, _>("active_version_snapshot_count")
+            .map_err(internal_error)?,
+        latest_snapshot_id: row
+            .try_get::<i64, _>("latest_snapshot_id")
+            .map_err(internal_error)?,
+    })
+}
+
+fn render_prometheus_metrics(state: &AppState, dataset: Option<&MetricsDatasetSummary>) -> String {
+    let service = prometheus_label_value(&state.config.service_name);
+    let database_type = prometheus_label_value(&state.config.database_type.to_string());
+    let database_up = i64::from(dataset.is_some());
+    let mut body = format!(
+        "# HELP station_api_up station-api process is serving requests.\n\
+         # TYPE station_api_up gauge\n\
+         station_api_up{{service=\"{service}\"}} 1\n\
+         # HELP station_api_database_up Backing database query status for metrics collection.\n\
+         # TYPE station_api_database_up gauge\n\
+         station_api_database_up{{database_type=\"{database_type}\"}} {database_up}\n",
+    );
+
+    if let Some(dataset) = dataset {
+        body.push_str(&format!(
+            "# HELP station_api_n02_active_station_count Active station rows from the canonical N02 source.\n\
+             # TYPE station_api_n02_active_station_count gauge\n\
+             station_api_n02_active_station_count {}\n\
+             # HELP station_api_n02_distinct_station_name_count Distinct active station names from the canonical N02 source.\n\
+             # TYPE station_api_n02_distinct_station_name_count gauge\n\
+             station_api_n02_distinct_station_name_count {}\n\
+             # HELP station_api_n02_distinct_line_count Distinct active line names from the canonical N02 source.\n\
+             # TYPE station_api_n02_distinct_line_count gauge\n\
+             station_api_n02_distinct_line_count {}\n\
+             # HELP station_api_n02_active_version_snapshot_count Source snapshots represented by active N02 station versions.\n\
+             # TYPE station_api_n02_active_version_snapshot_count gauge\n\
+             station_api_n02_active_version_snapshot_count {}\n\
+             # HELP station_api_n02_latest_snapshot_id Latest source snapshot id represented by active N02 station versions, or 0 when empty.\n\
+             # TYPE station_api_n02_latest_snapshot_id gauge\n\
+             station_api_n02_latest_snapshot_id {}\n",
+            dataset.active_station_count,
+            dataset.distinct_station_name_count,
+            dataset.distinct_line_count,
+            dataset.active_version_snapshot_count,
+            dataset.latest_snapshot_id,
+        ));
+    }
+
+    body
+}
+
+fn prometheus_label_value(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('"', "\\\"")
 }
 
 fn readiness_response(
@@ -1027,11 +1164,11 @@ mod tests {
 
     use super::{
         app, dataset_changes, dataset_snapshots, dataset_status, line_catalog, line_stations,
-        map_anyhow_to_sqlx_error, nullable_integer_aggregate_sql, operator_stations,
-        search_stations, text_equals_sql, text_group_sql, text_like_sql, text_order_sql, ApiQuery,
-        AppState, DatasetChangeKindDto, DatasetChangesParams, DatasetSnapshotsParams,
-        LineCatalogParams, LineStationsParams, SearchParams, N02_SOURCE_NAME,
-        N02_STATION_UID_PREFIX,
+        map_anyhow_to_sqlx_error, metrics, nullable_integer_aggregate_sql, operator_stations,
+        prometheus_label_value, search_stations, text_equals_sql, text_group_sql, text_like_sql,
+        text_order_sql, ApiQuery, AppState, DatasetChangeKindDto, DatasetChangesParams,
+        DatasetSnapshotsParams, LineCatalogParams, LineStationsParams, SearchParams,
+        N02_SOURCE_NAME, N02_STATION_UID_PREFIX,
     };
 
     #[test]
@@ -1198,6 +1335,17 @@ mod tests {
         assert_eq!(ready["dataset"]["status"].as_str(), Some("needs_ingest"));
         assert_eq!(ready["dataset"]["active_station_count"].as_i64(), Some(1));
 
+        let metrics = app.clone().oneshot(get("/metrics")).await.unwrap();
+        assert_eq!(metrics.status(), StatusCode::OK);
+        assert!(metrics
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/plain")));
+        let metrics = text_body(metrics).await;
+        assert!(metrics.contains("station_api_database_up{database_type=\"sqlite\"} 1"));
+        assert!(metrics.contains("station_api_n02_active_station_count 1"));
+
         let dataset = json_body(
             app.clone()
                 .oneshot(get("/v1/dataset/status"))
@@ -1256,6 +1404,7 @@ mod tests {
         for path in [
             "/health",
             "/ready",
+            "/metrics",
             "/v1/dataset/status",
             "/v1/dataset/snapshots",
             "/v1/dataset/changes",
@@ -1389,6 +1538,70 @@ mod tests {
 
         let body = text_body(docs).await;
         assert!(body.contains("Swagger UI"));
+    }
+
+    #[tokio::test]
+    async fn metrics_scopes_counts_to_n02_rows() {
+        let pool = test_pool().await;
+        insert_snapshot(&pool, 24).await;
+        insert_snapshot(&pool, 25).await;
+        insert_station(
+            &pool,
+            24,
+            StationSeed::new(
+                "stn_n02_shinjuku",
+                "新宿",
+                "中央線",
+                "東日本旅客鉄道",
+                35.6900,
+                139.7000,
+            ),
+        )
+        .await;
+        insert_station(
+            &pool,
+            25,
+            StationSeed::new(
+                "stn_n02_shibuya",
+                "渋谷",
+                "山手線",
+                "東日本旅客鉄道",
+                35.6580,
+                139.7016,
+            ),
+        )
+        .await;
+        insert_station(
+            &pool,
+            25,
+            StationSeed::new(
+                "stn_other_network",
+                "ノイズ駅",
+                "ノイズ線",
+                "ノイズ交通",
+                35.6000,
+                139.6000,
+            ),
+        )
+        .await;
+
+        let response = metrics(State(test_state(pool))).await.into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text_body(response).await;
+        assert!(body.contains("station_api_n02_active_station_count 2"));
+        assert!(body.contains("station_api_n02_distinct_station_name_count 2"));
+        assert!(body.contains("station_api_n02_distinct_line_count 2"));
+        assert!(body.contains("station_api_n02_active_version_snapshot_count 2"));
+        assert!(body.contains("station_api_n02_latest_snapshot_id 25"));
+    }
+
+    #[test]
+    fn prometheus_label_values_are_escaped() {
+        assert_eq!(
+            prometheus_label_value("station-api\"test\\service\nnext"),
+            "station-api\\\"test\\\\service\\nnext"
+        );
     }
 
     #[tokio::test]

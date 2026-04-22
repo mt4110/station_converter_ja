@@ -45,6 +45,23 @@ DB に接続できない場合は `503` で同 shape を返し、`dataset.status
 DB に接続できるが N02 active row が full dataset floor に満たない場合、
 `status` は `ready` のまま、`dataset.status` が `needs_ingest` になります。
 
+### GET `/metrics`
+
+Prometheus text exposition format で API scrape status と canonical N02 dataset counts を返す。
+DB query が失敗した場合も HTTP 200 を返し、`station_api_database_up` が `0` になります。
+
+```text
+# HELP station_api_up station-api process is serving requests.
+# TYPE station_api_up gauge
+station_api_up{service="station-api"} 1
+# HELP station_api_database_up Backing database query status for metrics collection.
+# TYPE station_api_database_up gauge
+station_api_database_up{database_type="postgres"} 1
+# HELP station_api_n02_active_station_count Active station rows from the canonical N02 source.
+# TYPE station_api_n02_active_station_count gauge
+station_api_n02_active_station_count 10155
+```
+
 ### GET `/v1/dataset/status`
 
 現在アクティブな駅データ件数と、sample web を出してよい状態かどうかを返す。
