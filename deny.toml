@@ -27,7 +27,7 @@ ignore = false
 
 [bans]
 multiple-versions = "allow"
-wildcards = "allow"
+wildcards = "warn"
 highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
