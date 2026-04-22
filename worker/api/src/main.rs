@@ -248,40 +248,44 @@ fn render_prometheus_metrics(state: &AppState, dataset: Option<&N02DatasetAggreg
     let service = prometheus_label_value(&state.config.service_name);
     let database_type = prometheus_label_value(&state.config.database_type.to_string());
     let database_up = i64::from(dataset.is_some());
-    let mut body = format!(
-        "# HELP station_api_up station-api process is serving requests.\n\
-         # TYPE station_api_up gauge\n\
-         station_api_up{{service=\"{service}\"}} 1\n\
-         # HELP station_api_database_up Backing database query status for metrics collection.\n\
-         # TYPE station_api_database_up gauge\n\
-         station_api_database_up{{database_type=\"{database_type}\"}} {database_up}\n",
-    );
+    let mut lines = vec![
+        "# HELP station_api_up station-api process is serving requests.".to_string(),
+        "# TYPE station_api_up gauge".to_string(),
+        format!("station_api_up{{service=\"{service}\"}} 1"),
+        "# HELP station_api_database_up Backing database query status for metrics collection."
+            .to_string(),
+        "# TYPE station_api_database_up gauge".to_string(),
+        format!("station_api_database_up{{database_type=\"{database_type}\"}} {database_up}"),
+    ];
 
     if let Some(dataset) = dataset {
-        body.push_str(&format!(
-            "# HELP station_api_n02_active_station_count Active station rows from the canonical N02 source.\n\
-             # TYPE station_api_n02_active_station_count gauge\n\
-             station_api_n02_active_station_count {}\n\
-             # HELP station_api_n02_distinct_station_name_count Distinct active station names from the canonical N02 source.\n\
-             # TYPE station_api_n02_distinct_station_name_count gauge\n\
-             station_api_n02_distinct_station_name_count {}\n\
-             # HELP station_api_n02_distinct_line_count Distinct active line names from the canonical N02 source.\n\
-             # TYPE station_api_n02_distinct_line_count gauge\n\
-             station_api_n02_distinct_line_count {}\n\
-             # HELP station_api_n02_active_version_snapshot_count Source snapshots represented by active N02 station versions.\n\
-             # TYPE station_api_n02_active_version_snapshot_count gauge\n\
-             station_api_n02_active_version_snapshot_count {}\n\
-             # HELP station_api_n02_latest_snapshot_id Latest source snapshot id represented by active N02 station versions, or 0 when empty.\n\
-             # TYPE station_api_n02_latest_snapshot_id gauge\n\
-             station_api_n02_latest_snapshot_id {}\n",
-            dataset.active_station_count,
-            dataset.distinct_station_name_count,
-            dataset.distinct_line_count,
-            dataset.active_version_snapshot_count,
-            dataset.latest_snapshot_id,
-        ));
+        lines.extend([
+            "# HELP station_api_n02_active_station_count Active station rows from the canonical N02 source.".to_string(),
+            "# TYPE station_api_n02_active_station_count gauge".to_string(),
+            format!("station_api_n02_active_station_count {}", dataset.active_station_count),
+            "# HELP station_api_n02_distinct_station_name_count Distinct active station names from the canonical N02 source.".to_string(),
+            "# TYPE station_api_n02_distinct_station_name_count gauge".to_string(),
+            format!(
+                "station_api_n02_distinct_station_name_count {}",
+                dataset.distinct_station_name_count
+            ),
+            "# HELP station_api_n02_distinct_line_count Distinct active line names from the canonical N02 source.".to_string(),
+            "# TYPE station_api_n02_distinct_line_count gauge".to_string(),
+            format!("station_api_n02_distinct_line_count {}", dataset.distinct_line_count),
+            "# HELP station_api_n02_active_version_snapshot_count Source snapshots represented by active N02 station versions.".to_string(),
+            "# TYPE station_api_n02_active_version_snapshot_count gauge".to_string(),
+            format!(
+                "station_api_n02_active_version_snapshot_count {}",
+                dataset.active_version_snapshot_count
+            ),
+            "# HELP station_api_n02_latest_snapshot_id Latest source snapshot id represented by active N02 station versions, or 0 when empty.".to_string(),
+            "# TYPE station_api_n02_latest_snapshot_id gauge".to_string(),
+            format!("station_api_n02_latest_snapshot_id {}", dataset.latest_snapshot_id),
+        ]);
     }
 
+    let mut body = lines.join("\n");
+    body.push('\n');
     body
 }
 
@@ -1567,6 +1571,12 @@ mod tests {
         assert!(body.contains("station_api_database_up{database_type=\"sqlite\"} 1"));
         assert!(body.contains("station_api_n02_active_station_count 0"));
         assert!(body.contains("station_api_n02_latest_snapshot_id 0"));
+        for line in body.lines().filter(|line| !line.is_empty()) {
+            assert!(
+                line.starts_with('#') || line.starts_with("station_api_"),
+                "invalid Prometheus line prefix: {line:?}",
+            );
+        }
     }
 
     #[test]
