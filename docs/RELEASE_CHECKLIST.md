@@ -76,7 +76,7 @@ cargo deny check
 cargo audit --ignore RUSTSEC-2023-0071
 ```
 
-If a dependency advisory ignore changes, confirm the reason is documented in
+If the advisory ignore list changes, confirm the reason is documented in
 both `deny.toml` and `.github/workflows/security.yml` before publishing.
 
 ## 3. Release Database Verification
