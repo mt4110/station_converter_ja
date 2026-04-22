@@ -18,7 +18,7 @@ use station_shared::{
     },
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     error::{internal_error, ApiError, ApiQuery, ApiResult},
@@ -169,10 +169,10 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     )
 )]
 async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
-    let dataset = match fetch_metrics_dataset_summary(&state).await {
+    let dataset = match fetch_n02_dataset_aggregates(&state).await {
         Ok(dataset) => Some(dataset),
         Err(err) => {
-            error!(error = ?err, "metrics dataset summary failed");
+            warn!(error = ?err, "metrics dataset summary failed");
             None
         }
     };
@@ -187,7 +187,7 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 #[derive(Debug)]
-struct MetricsDatasetSummary {
+struct N02DatasetAggregates {
     active_station_count: i64,
     distinct_station_name_count: i64,
     distinct_line_count: i64,
@@ -195,13 +195,9 @@ struct MetricsDatasetSummary {
     latest_snapshot_id: i64,
 }
 
-async fn fetch_metrics_dataset_summary(
-    state: &AppState,
-) -> Result<MetricsDatasetSummary, ApiError> {
-    let n02_where_clause = format!(
-        "WHERE {}",
-        prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len())
-    );
+async fn fetch_n02_dataset_aggregates(state: &AppState) -> Result<N02DatasetAggregates, ApiError> {
+    let station_uid_scope =
+        prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len());
     let sql = format!(
         "SELECT
            {} AS active_station_count,
@@ -210,7 +206,7 @@ async fn fetch_metrics_dataset_summary(
            {} AS active_version_snapshot_count,
            {} AS latest_snapshot_id
          FROM stations_latest
-         {n02_where_clause}",
+         WHERE {station_uid_scope}",
         integer_aggregate_sql(state.dialect, "COUNT(*)"),
         integer_aggregate_sql(
             state.dialect,
@@ -229,7 +225,7 @@ async fn fetch_metrics_dataset_summary(
         .await
         .map_err(internal_error)?;
 
-    Ok(MetricsDatasetSummary {
+    Ok(N02DatasetAggregates {
         active_station_count: row
             .try_get::<i64, _>("active_station_count")
             .map_err(internal_error)?,
@@ -248,7 +244,7 @@ async fn fetch_metrics_dataset_summary(
     })
 }
 
-fn render_prometheus_metrics(state: &AppState, dataset: Option<&MetricsDatasetSummary>) -> String {
+fn render_prometheus_metrics(state: &AppState, dataset: Option<&N02DatasetAggregates>) -> String {
     let service = prometheus_label_value(&state.config.service_name);
     let database_type = prometheus_label_value(&state.config.database_type.to_string());
     let database_up = i64::from(dataset.is_some());
@@ -440,47 +436,11 @@ async fn search_stations(
     )
 )]
 async fn dataset_status(State(state): State<AppState>) -> ApiResult<DatasetStatusResponseDto> {
-    let n02_where_clause = format!(
-        "WHERE {}",
-        prefix_scope_sql(state.dialect, "station_uid", N02_STATION_UID_PREFIX.len())
-    );
-    let counts_sql = format!(
-        "SELECT
-           {} AS active_station_count,
-           {} AS distinct_station_name_count,
-           {} AS distinct_line_count,
-           {} AS active_version_snapshot_count
-         FROM stations_latest
-         {n02_where_clause}",
-        integer_aggregate_sql(state.dialect, "COUNT(*)"),
-        integer_aggregate_sql(
-            state.dialect,
-            &distinct_text_count_sql(state.dialect, "station_name"),
-        ),
-        integer_aggregate_sql(
-            state.dialect,
-            &distinct_text_count_sql(state.dialect, "line_name"),
-        ),
-        integer_aggregate_sql(state.dialect, "COUNT(DISTINCT snapshot_id)"),
-    );
-    let counts = sqlx::query(&state.dialect.statement(&counts_sql))
-        .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
-        .fetch_one(&state.pool)
-        .await
-        .map_err(internal_error)?;
-
-    let active_station_count = counts
-        .try_get::<i64, _>("active_station_count")
-        .map_err(internal_error)?;
-    let distinct_station_name_count = counts
-        .try_get::<i64, _>("distinct_station_name_count")
-        .map_err(internal_error)?;
-    let distinct_line_count = counts
-        .try_get::<i64, _>("distinct_line_count")
-        .map_err(internal_error)?;
-    let active_version_snapshot_count = counts
-        .try_get::<i64, _>("active_version_snapshot_count")
-        .map_err(internal_error)?;
+    let counts = fetch_n02_dataset_aggregates(&state).await?;
+    let active_station_count = counts.active_station_count;
+    let distinct_station_name_count = counts.distinct_station_name_count;
+    let distinct_line_count = counts.distinct_line_count;
+    let active_version_snapshot_count = counts.active_version_snapshot_count;
 
     let active_snapshot = sqlx::query(&state.dialect.statement(
         "SELECT id, source_version, source_url
@@ -1594,6 +1554,19 @@ mod tests {
         assert!(body.contains("station_api_n02_distinct_line_count 2"));
         assert!(body.contains("station_api_n02_active_version_snapshot_count 2"));
         assert!(body.contains("station_api_n02_latest_snapshot_id 25"));
+    }
+
+    #[tokio::test]
+    async fn metrics_reports_database_up_for_empty_dataset() {
+        let response = metrics(State(test_state(test_pool().await)))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = text_body(response).await;
+        assert!(body.contains("station_api_database_up{database_type=\"sqlite\"} 1"));
+        assert!(body.contains("station_api_n02_active_station_count 0"));
+        assert!(body.contains("station_api_n02_latest_snapshot_id 0"));
     }
 
     #[test]
