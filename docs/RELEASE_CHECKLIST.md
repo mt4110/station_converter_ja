@@ -71,8 +71,13 @@ Run the standard local gates.
 ./scripts/verify_repo.sh
 ./scripts/verify_ingest_export.sh postgres
 ./scripts/verify_ingest_export.sh mysql
-cd frontend && npm ci && npm run build
+(cd frontend && npm ci && npm run build)
+cargo deny check
+cargo audit --ignore RUSTSEC-2023-0071
 ```
+
+If the advisory ignore list changes, confirm the reason is documented in
+both `deny.toml` and `.github/workflows/security.yml` before publishing.
 
 ## 3. Release Database Verification
 
