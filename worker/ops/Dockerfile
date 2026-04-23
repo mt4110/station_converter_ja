@@ -3,7 +3,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY worker ./worker
 COPY storage/migrations ./storage/migrations
-RUN cargo build --locked --release -p station-api
+RUN cargo build --locked --release -p station-ops
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -14,7 +14,7 @@ RUN apt-get update \
 WORKDIR /app
 RUN mkdir -p storage/locks storage/sqlite worker/crawler/temp_assets \
     && chown -R station:station /app
-COPY --from=build /app/target/release/station-api /usr/local/bin/station-api
+COPY --from=build /app/target/release/station-ops /usr/local/bin/station-ops
 USER station
-EXPOSE 3212
-CMD ["station-api"]
+ENTRYPOINT ["station-ops"]
+CMD ["--help"]

@@ -8,7 +8,7 @@
 - Understand source, license, and freshness: [SOURCE_POLICY.md](./SOURCE_POLICY.md), [DATA_LICENSE.md](./DATA_LICENSE.md), [DATA_FRESHNESS.md](./DATA_FRESHNESS.md)
 - Check data quality: [DATA_QUALITY.md](./DATA_QUALITY.md)
 - Ship a release: [RELEASE.md](./RELEASE.md), [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md), [ARTIFACTS.md](./ARTIFACTS.md)
-- Operate a service: [OPERATIONS.md](./OPERATIONS.md), [OBSERVABILITY.md](./OBSERVABILITY.md)
+- Operate a service: [OPERATIONS.md](./OPERATIONS.md), [CONTAINER_IMAGES.md](./CONTAINER_IMAGES.md), [OBSERVABILITY.md](./OBSERVABILITY.md)
 - Use Redis safely: [REDIS_CACHE.md](./REDIS_CACHE.md)
 - Answer common questions: [FAQ.md](./FAQ.md)
 

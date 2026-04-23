@@ -212,6 +212,11 @@ sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-con
 
 セットアップ手順と運用 runbook は [`docs/OPERATIONS.md`](docs/OPERATIONS.md) を参照してください。
 
+### container image を使う場合
+
+GHCR には `station-api` 用と `station-ops` 用の image を分けて publish します。
+tag policy と Docker の最小起動例は [`docs/CONTAINER_IMAGES.md`](docs/CONTAINER_IMAGES.md) を参照してください。
+
 ## Verify / Release
 
 静的チェックと DB 実経路の確認:

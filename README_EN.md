@@ -113,6 +113,11 @@ sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-con
 
 See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for install and runbook details.
 
+### Container images
+
+GHCR publishes separate images for `station-api` and `station-ops`.
+See [`docs/CONTAINER_IMAGES.md`](docs/CONTAINER_IMAGES.md) for tag policy and minimal Docker examples.
+
 ## Verify / Release
 
 Static verification plus database-backed flow checks:
@@ -222,6 +227,10 @@ it is not real-time railway data.
   - lock policy
 - [docs/DEPLOY.md](docs/DEPLOY.md)
   - self-hosted and cloud deployment positioning
+- [docs/CONTAINER_IMAGES.md](docs/CONTAINER_IMAGES.md)
+  - GHCR image names
+  - tag policy
+  - minimal Docker examples
 - [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md)
   - canonical source and licensing boundary
   - N05 overlay policy
@@ -279,6 +288,7 @@ Included:
 - dataset snapshot / change history API
 - standard error envelope with optional machine-readable detail
 - source freshness watcher
+- GHCR container images for API and operational jobs
 - data quality gates and SQLite parity checks
 - example frontend
 - self-hosted systemd path

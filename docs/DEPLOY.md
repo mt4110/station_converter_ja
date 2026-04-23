@@ -10,6 +10,10 @@
 
 `deploy/systemd/` に実ファイルを置いています。
 
+container image で運用する場合も役割は同じです。
+API と one-shot ops image の tag policy / 最小起動例は
+[`docs/CONTAINER_IMAGES.md`](./CONTAINER_IMAGES.md) にまとめています。
+
 ## Cloud skeletons kept in-tree
 
 次は将来拡張用の骨格として残しています。

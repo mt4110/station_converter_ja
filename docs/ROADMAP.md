@@ -276,17 +276,17 @@ canonical export に急いで混ぜないこと。
 
 ### v0.3.0: trust package
 
-- artifact attestation
-- SBOM
-- OpenSSF Scorecard
-- `cargo-deny`
-- Dependabot
+- [x] artifact attestation
+- [x] SBOM
+- [x] OpenSSF Scorecard
+- [x] `cargo-deny`
+- [x] Dependabot
 - branch protection docs
 - [x] release checklist
 
 ### v0.4.0: operations
 
-- `/metrics`
+- [x] `/metrics`
 - [x] source freshness watcher
 - [x] publish pipeline
 - cache invalidation by dataset revision policy
@@ -296,7 +296,7 @@ canonical export に急いで混ぜないこと。
 
 - GitHub Pages docs
 - demo frontend
-- Docker image
+- [x] Docker image
 - AWS reference deployment
 - GCP / Azure は artifact publish skeleton を維持
 
