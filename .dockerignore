@@ -1,8 +1,14 @@
 target
 frontend/node_modules
 frontend/.next
+.docker-data
 .git
 .gitignore
+**/.env
+**/.env.*
 docs/*_LOCAL.md
+artifacts/*
+storage/locks/*
 artifacts/sqlite/*
 storage/sqlite/*
+worker/crawler/temp_assets/*
