@@ -71,7 +71,7 @@ Run the standard local gates.
 ./scripts/verify_repo.sh
 ./scripts/verify_ingest_export.sh postgres
 ./scripts/verify_ingest_export.sh mysql
-cd frontend && npm ci && npm run build
+(cd frontend && npm ci && npm run build)
 cargo deny check
 cargo audit --ignore RUSTSEC-2023-0071
 ```
