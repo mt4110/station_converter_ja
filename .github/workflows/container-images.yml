@@ -44,7 +44,7 @@ jobs:
             org.opencontainers.image.description=station_converter_ja ${{ matrix.name }} image
 
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -94,7 +94,7 @@ jobs:
             org.opencontainers.image.description=station_converter_ja ${{ matrix.name }} image
 
       - name: Build and publish image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
