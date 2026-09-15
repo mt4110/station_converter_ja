@@ -19,7 +19,7 @@ services:
       retries: 20
 
   postgres:
-    image: postgres:18
+    image: postgres:16
     container_name: station-postgres
     restart: unless-stopped
     environment:
