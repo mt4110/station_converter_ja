@@ -281,7 +281,7 @@ canonical export に急いで混ぜないこと。
 - [x] OpenSSF Scorecard
 - [x] `cargo-deny`
 - [x] Dependabot
-- branch protection docs
+- [x] branch protection docs
 - [x] release checklist
 
 ### v0.4.0: operations
@@ -294,7 +294,8 @@ canonical export に急いで混ぜないこと。
 
 ### v0.5.0: distribution
 
-- GitHub Pages docs
+- [x] GitHub Pages docs minimum entrypoint
+- GitHub Pages deployment
 - demo frontend
 - [x] Docker image
 - AWS reference deployment

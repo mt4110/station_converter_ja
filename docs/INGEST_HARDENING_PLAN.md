@@ -78,10 +78,13 @@ frontend や API の機能追加はこのフェーズでは主目的にしない
 - `validate-ingest` は `warning` で通過
   - warning 理由は `source_url` が local file (`file://...`) だったため
 
-この比較では MySQL は `200` が最良だったため、env 未指定時の default write chunk size は DB ごとに分ける:
+この比較では MySQL は `200` が最良だったため、env 未指定時の default write chunk size は DB ごとに分ける。
+ただし SQLite は build によって bind parameter 上限が `999` のことがあるため、
+default は SQLite だけ安全側に倒している:
 
-- PostgreSQL / SQLite: `1000`
-- MySQL: `200`
+- PostgreSQL: `write=1000` / `close=1000`
+- MySQL: `write=200` / `close=1000`
+- SQLite: `write=76` / `close=998`
 
 補足:
 
@@ -234,7 +237,7 @@ station-ops validate-ingest
 
 - `INGEST_WRITE_CHUNK_SIZE` で identity / version / change_event batch size を切り替えられる
 - `INGEST_CLOSE_CHUNK_SIZE` で stale version close update の chunk size を切り替えられる
-- env 未指定時の default は PostgreSQL / SQLite が `1000`、MySQL が `200`
+- env 未指定時の default は PostgreSQL が `write=1000` / `close=1000`、MySQL が `write=200` / `close=1000`、SQLite が `write=76` / `close=998`
 
 ### Why Not Parallel Upsert First
 
