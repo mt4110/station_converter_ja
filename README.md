@@ -309,6 +309,11 @@ real-time railway data ではありません。
   - verify scripts
 - [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
   - tag / publish 前の checklist
+- [docs/REPOSITORY_GOVERNANCE.md](docs/REPOSITORY_GOVERNANCE.md)
+  - required checks
+  - Dependabot / security / release permission policy
+- [docs/GITHUB_PAGES.md](docs/GITHUB_PAGES.md)
+  - GitHub Pages 用の最小公開入口
 - [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
   - SQLite release bundle の中身
   - checksum / attestation verify
@@ -329,6 +334,9 @@ real-time railway data ではありません。
 - [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md)
   - canonical source と license 境界
   - N05 overlay の扱い
+- [docs/DATA_LICENSE.md](docs/DATA_LICENSE.md)
+  - 配布 artifact の license 入口
+  - 再配布時の注意
 - [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)
   - operator checks
 - [docs/REDIS_CACHE.md](docs/REDIS_CACHE.md)
@@ -345,13 +353,15 @@ real-time railway data ではありません。
 - SQLite artifact を配布 / 検証したい: [docs/RELEASE.md](docs/RELEASE.md), [docs/ROADMAP.md](docs/ROADMAP.md)
 - SQLite artifact をローカルで使いたい: [docs/QUICKSTART_SQLITE.md](docs/QUICKSTART_SQLITE.md)
 - release bundle の中身を確認したい: [docs/ARTIFACTS.md](docs/ARTIFACTS.md)
+- repository policy / required checks を確認したい: [docs/REPOSITORY_GOVERNANCE.md](docs/REPOSITORY_GOVERNANCE.md)
+- GitHub Pages の最小公開方針を確認したい: [docs/GITHUB_PAGES.md](docs/GITHUB_PAGES.md)
 - API をローカルで立ち上げたい: [docs/QUICKSTART_API.md](docs/QUICKSTART_API.md), [API_SPEC.md](API_SPEC.md), [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - OpenAPI / API contract の現状と残りの polish を見たい: [docs/OPENAPI.md](docs/OPENAPI.md), [API_SPEC.md](API_SPEC.md)
 - source freshness を確認したい: [docs/DATA_FRESHNESS.md](docs/DATA_FRESHNESS.md)
 - data quality gate を確認したい: [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md)
 - self-host したい: [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/DEPLOY.md](docs/DEPLOY.md)
 - DB schema と example SQL を見たい: [docs/DATABASE.md](docs/DATABASE.md)
-- source / license 方針を確認したい: [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md), [docs/ROADMAP.md](docs/ROADMAP.md)
+- source / license 方針を確認したい: [docs/SOURCE_POLICY.md](docs/SOURCE_POLICY.md), [docs/DATA_LICENSE.md](docs/DATA_LICENSE.md), [docs/ROADMAP.md](docs/ROADMAP.md)
 - 次に詰める残タスクを見たい: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## データ方針

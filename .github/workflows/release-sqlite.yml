@@ -21,7 +21,7 @@ jobs:
       DATABASE_TYPE: postgres
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: station_db
           POSTGRES_USER: postgres
@@ -34,7 +34,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
