@@ -10,16 +10,16 @@
     "verify:station-sdk": "node ./scripts/generate-station-sdk.mjs --check"
   },
   "dependencies": {
-    "next": "^16.3.5",
+    "next": "^16.3.6",
     "openapi-fetch": "^0.17.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@types/node": "^24.13.4",
+    "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "openapi-typescript": "^7.13.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   }
 }
