@@ -34,3 +34,15 @@ updates:
       time: "09:30"
       timezone: Asia/Tokyo
     open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /worker/api
+      - /worker/crawler
+      - /worker/ops
+    schedule:
+      interval: daily
+      time: "09:45"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5

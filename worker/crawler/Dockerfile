@@ -1,9 +1,9 @@
 FROM rust:1-bookworm AS build
 WORKDIR /app
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY worker ./worker
 COPY storage ./storage
-RUN cargo build --release -p station-crawler
+RUN cargo build --locked --release -p station-crawler
 
 FROM debian:bookworm-slim
 WORKDIR /app

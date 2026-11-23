@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+staged=$(mktemp -d)
+trap 'rm -f -- "$staged/Cargo.lock" "$staged/frontend/package-lock.json"; rmdir "$staged/frontend" "$staged"' EXIT
+mkdir "$staged/frontend"
+# Use the index so a clean working-tree lockfile cannot mask a vulnerable commit.
+git show :Cargo.lock > "$staged/Cargo.lock"
+git show :frontend/package-lock.json > "$staged/frontend/package-lock.json"
+exec_status=0
+"$root/scripts/check-osv-lockfiles.sh" "$staged" || exec_status=$?
+exit "$exec_status"

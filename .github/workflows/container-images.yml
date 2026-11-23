@@ -6,17 +6,37 @@ on:
     tags:
       - "v*"
   pull_request:
+  schedule:
+    - cron: "45 0 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    if: github.event_name != 'push'
+  osv-lockfiles:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: ./scripts/install-ci-osv-scanner.sh
+      - run: ./scripts/check-osv-lockfiles.sh
+
+  osv-docker-inputs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: ./scripts/install-ci-osv-scanner.sh
+      - run: ./scripts/check-osv-docker-inputs.sh
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -25,38 +45,54 @@ jobs:
             dockerfile: worker/api/Dockerfile
           - name: ops
             dockerfile: worker/ops/Dockerfile
+          - name: crawler
+            dockerfile: worker/crawler/Dockerfile
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Extract image metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ github.repository }}/${{ matrix.name }}
-          tags: |
-            type=sha,format=short,prefix=sha-
-            type=ref,event=tag
-          labels: |
-            org.opencontainers.image.title=station-converter-ja-${{ matrix.name }}
-            org.opencontainers.image.description=station_converter_ja ${{ matrix.name }} image
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          pull: true
+          load: true
+          tags: station-osv/${{ matrix.name }}:candidate
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }},ignore-error=true
 
+      - run: ./scripts/install-ci-osv-scanner.sh
+      - name: Scan runtime image
+        env:
+          IMAGE: station-osv/${{ matrix.name }}:candidate
+        run: osv-scanner scan image --config /dev/null --all-vulns --format vertical "$IMAGE"
+
+  osv-gate:
+    name: OSV dependency gate
+    if: always()
+    needs: [osv-lockfiles, osv-docker-inputs, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every OSV scan to pass
+        env:
+          LOCKFILES: ${{ needs.osv-lockfiles.result }}
+          DOCKER_INPUTS: ${{ needs.osv-docker-inputs.result }}
+          RUNTIME_IMAGES: ${{ needs.build.result }}
+        run: |
+          printf 'Lockfiles: %s\nDocker inputs: %s\nRuntime images: %s\n' "$LOCKFILES" "$DOCKER_INPUTS" "$RUNTIME_IMAGES"
+          [[ "$LOCKFILES" == success && "$DOCKER_INPUTS" == success && "$RUNTIME_IMAGES" == success ]]
+
   publish:
     if: github.event_name == 'push'
+    needs: osv-gate
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: read
       packages: write
@@ -69,21 +105,16 @@ jobs:
           - name: ops
             dockerfile: worker/ops/Dockerfile
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Extract image metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/${{ github.repository }}/${{ matrix.name }}
           tags: |
@@ -93,13 +124,38 @@ jobs:
             org.opencontainers.image.title=station-converter-ja-${{ matrix.name }}
             org.opencontainers.image.description=station_converter_ja ${{ matrix.name }} image
 
-      - name: Build and publish image
-        uses: docker/build-push-action@v7
+      - name: Build publication candidate
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: true
+          pull: true
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }},ignore-error=true
+
+      - run: ./scripts/install-ci-osv-scanner.sh
+      - name: Scan the image that will be pushed
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          image=${TAGS%%$'\n'*}
+          docker image inspect "${image:?No publication tag}" >/dev/null
+          osv-scanner scan image --config /dev/null --all-vulns --format vertical "$image"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push scanned image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r tag; do
+            docker push "${tag:?Empty publication tag}"
+          done <<< "$TAGS"

@@ -51,14 +51,37 @@ OpenAPI 変更時に generated SDK / 型定義の取りこぼしを検出しま�
 - dependency security checks が通ること
 
 ```bash
+./scripts/check-osv-lockfiles.sh
 cargo deny check
-cargo audit --ignore RUSTSEC-2023-0071
+cargo audit
 ```
-
-`RUSTSEC-2023-0071` は `sqlx-mysql` 経由の既知 advisory です。
-ignore を増減するときは、`deny.toml` と GitHub Actions workflow の両方に
-理由を残してください。
 
 - docs の導線が壊れていないこと
 - `N02` canonical / `N05` optional non-commercial overlay の線引きを崩していないこと
 - PostgreSQL / MySQL が primary write、SQLite が read-only artifact という前提を崩していないこと
+
+## Dependency vulnerability checks
+
+[OSV-Scanner v2](https://google.github.io/osv-scanner/installation/) を PATH に入れ、
+この clone で pre-commit を有効にします。既に Git フックを使っている場合は、
+下の設定を適用する前に既存のフックから `.githooks/pre-commit` を呼ぶように統合してください。
+
+```bash
+git config --local core.hooksPath .githooks
+```
+
+pre-commit はステージ済みの `Cargo.lock` と `frontend/package-lock.json` を検査します。
+脆弱性の検出、ロックファイルの欠落、スキャンの失敗はいずれもコミットを止めます。
+フックは clone ごとに有効化が必要です。GitHub では `OSV dependency gate` を
+`main` の必須チェックに設定し、端末にかかわらずマージ時に検査します。
+
+CI は同じロックファイルに加え、Dockerfile のベースイメージ、Compose の全プロファイル、
+CI の DB サービス、ビルドした API・ops・crawler の各イメージを検査します。
+重大度を問わず OSV が報告した脆弱性をすべてブロックします。
+定期実行は毎日 09:45 JST が目安です。コンテナ公開はゲートの成功後に進み、
+GHCR に push するイメージも公開の直前にスキャンします。
+
+Dependabot は Cargo・npm・GitHub Actions のバージョンを週次、
+Dockerfile と Compose のイメージを日次で確認し、更新 PR を作成します。
+更新 PR にも同じ必須チェックが適用されます。複数の依存に脆弱性がある場合は、
+修正を同一の PR にまとめ、検査対象がすべて通る状態でマージします。
