@@ -42,6 +42,7 @@ docker compose --profile cache --profile dbweb build --pull redis adminer
 ```
 
 CI と SQLite リリース用の一時 PostgreSQL は、更新済みイメージの OSV 検査が成功してから起動します。
+CI 用の一時 MySQL も更新済みイメージを使い、Oracle Linux の RPM を Trivy で検査してから起動します。
 配布元イメージも依存関係の必須チェックで検査します。
 
 ## Minimal run with Docker Compose DB

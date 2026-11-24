@@ -16,8 +16,8 @@ base_images=$(awk '
   }
 ' worker/*/Dockerfile deploy/docker/*/Dockerfile)
 ci_images=$(awk '$1 == "image:" { print $2 }' .github/workflows/ci.yml .github/workflows/release-sqlite.yml)
-[[ -n "$compose_images" && -n "$base_images" && -n "$ci_images" ]]
-images=$(printf '%s\n' "$compose_images" "$base_images" "$ci_images" | sort -u)
+[[ -n "$compose_images" && -n "$base_images" ]]
+images=$(printf '%s\n' "$compose_images" "$base_images" "$ci_images" | awk 'NF' | sort -u)
 
 status=0
 while IFS= read -r image; do

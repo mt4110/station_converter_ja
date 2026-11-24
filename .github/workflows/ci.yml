@@ -82,23 +82,12 @@ jobs:
 
   integration-mysql:
     runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:9.7.4.1
-        env:
-          MYSQL_ROOT_PASSWORD: root_password
-          MYSQL_DATABASE: station_db
-          MYSQL_USER: station_user
-          MYSQL_PASSWORD: station_password
-        ports:
-          - 3214:3306
-        options: >-
-          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot_password --silent"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 20
     steps:
       - uses: actions/checkout@v7
+
+      - run: ./scripts/install-ci-trivy.sh
+      - run: ./scripts/start-ci-mysql.sh
+        timeout-minutes: 15
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
