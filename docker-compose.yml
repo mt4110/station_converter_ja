@@ -37,7 +37,9 @@ services:
       retries: 20
 
   redis:
-    image: redis:8.12.0-alpine
+    build: ./deploy/docker/redis
+    image: station-converter-ja-redis:local
+    pull_policy: build
     container_name: station-redis
     restart: unless-stopped
     profiles: ["cache"]
@@ -53,7 +55,9 @@ services:
       retries: 20
 
   adminer:
-    image: adminer:6.3.1
+    build: ./deploy/docker/adminer
+    image: station-converter-ja-adminer:local
+    pull_policy: build
     container_name: station-adminer
     restart: unless-stopped
     profiles: ["dbweb"]

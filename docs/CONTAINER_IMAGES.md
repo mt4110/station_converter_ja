@@ -18,7 +18,7 @@ GHCR には次の 2 つの image を publish します。
 
 `.github/workflows/container-images.yml` が image build / publish を担当します。
 
-- pull request: build only
+- pull request: ビルドと OSV 検査
 - push to `main`: publish `sha-<short-sha>` tag
 - push to `v*` tag: publish `sha-<short-sha>` tag and release tag
 
@@ -33,6 +33,16 @@ publish 前に手元で build だけ確認する場合:
 docker build -f worker/api/Dockerfile -t station-converter-ja-api:local .
 docker build -f worker/ops/Dockerfile -t station-converter-ja-ops:local .
 ```
+
+Compose の Redis と Adminer は `deploy/docker/` の Dockerfile からビルドします。
+ベースイメージを取得し直してパッケージ更新を適用するときは、対象サービスを再ビルドします。
+
+```bash
+docker compose --profile cache --profile dbweb build --pull redis adminer
+```
+
+CI と SQLite リリース用の一時 PostgreSQL は、更新済みイメージの OSV 検査が成功してから起動します。
+配布元イメージも依存関係の必須チェックで検査します。
 
 ## Minimal run with Docker Compose DB
 

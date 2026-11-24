@@ -19,24 +19,13 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       DATABASE_TYPE: postgres
-    services:
-      postgres:
-        image: postgres:19.0-alpine
-        env:
-          POSTGRES_DB: station_db
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres_password
-        ports:
-          - 3215:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d station_db"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 20
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - run: ./scripts/install-ci-osv-scanner.sh
+      - run: ./scripts/start-ci-postgres.sh
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

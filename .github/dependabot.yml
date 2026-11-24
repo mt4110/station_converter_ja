@@ -41,6 +41,9 @@ updates:
       - /worker/api
       - /worker/crawler
       - /worker/ops
+      - /deploy/docker/adminer
+      - /deploy/docker/postgres-ci
+      - /deploy/docker/redis
     schedule:
       interval: daily
       time: "09:45"
