@@ -1,5 +1,6 @@
 FROM rust:1.100.0-alpine3.24 AS build
-RUN apk add --no-cache build-base
+RUN apk upgrade --no-cache \
+    && apk add --no-cache build-base
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY worker ./worker
