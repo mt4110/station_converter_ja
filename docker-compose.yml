@@ -19,7 +19,9 @@ services:
       retries: 20
 
   postgres:
-    image: postgres:16.16
+    build: ./deploy/docker/postgres
+    image: station-converter-ja-postgres:local
+    pull_policy: build
     container_name: station-postgres
     restart: unless-stopped
     environment:
@@ -29,7 +31,7 @@ services:
     ports:
       - "3215:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_alpine_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d station_db"]
       interval: 10s
@@ -68,5 +70,5 @@ services:
 
 volumes:
   mysql_data:
-  postgres_data:
+  postgres_alpine_data:
   redis_data:

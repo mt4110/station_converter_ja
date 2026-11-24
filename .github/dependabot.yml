@@ -43,6 +43,7 @@ updates:
       - /worker/ops
       - /deploy/docker/adminer
       - /deploy/docker/mysql-ci
+      - /deploy/docker/postgres
       - /deploy/docker/postgres-ci
       - /deploy/docker/redis
     schedule:
