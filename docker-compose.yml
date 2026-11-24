@@ -1,6 +1,6 @@
 services:
   mysql:
-    image: mysql:8.4.11
+    image: mysql:8.4.13.1
     container_name: station-mysql
     restart: unless-stopped
     environment:
@@ -19,7 +19,7 @@ services:
       retries: 20
 
   postgres:
-    image: postgres:16
+    image: postgres:16.16
     container_name: station-postgres
     restart: unless-stopped
     environment:
@@ -37,7 +37,7 @@ services:
       retries: 20
 
   redis:
-    image: redis:8
+    image: redis:8.12.0-alpine
     container_name: station-redis
     restart: unless-stopped
     profiles: ["cache"]
@@ -53,7 +53,7 @@ services:
       retries: 20
 
   adminer:
-    image: adminer:4.17.1
+    image: adminer:6.3.1
     container_name: station-adminer
     restart: unless-stopped
     profiles: ["dbweb"]

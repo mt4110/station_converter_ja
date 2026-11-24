@@ -195,7 +195,7 @@ export interface components {
         ApiErrorDetailDto: {
             /** @description Stable machine-readable error code. */
             code: components["schemas"]["ApiErrorCode"];
-            detail?: null | components["schemas"]["ApiErrorDetailPayloadDto"];
+            detail?: components["schemas"]["ApiErrorDetailPayloadDto"] | null;
             /** @description Human-readable error message. */
             message: string;
         };
@@ -273,7 +273,7 @@ export interface components {
          */
         DatasetChangeDetailDto: {
             /** @description New station version context for `updated` events when available. */
-            after?: null | {
+            after?: {
                 /** @description Line name from the referenced station version. */
                 line_name?: string | null;
                 /** @description Operator name from the referenced station version. */
@@ -289,9 +289,9 @@ export interface components {
                  *     Removals are represented by the surrounding dataset change metadata, not by this field.
                  */
                 status?: string | null;
-            };
+            } | null;
             /** @description Previous station version context for `updated` events when available. */
-            before?: null | {
+            before?: {
                 /** @description Line name from the referenced station version. */
                 line_name?: string | null;
                 /** @description Operator name from the referenced station version. */
@@ -307,7 +307,7 @@ export interface components {
                  *     Removals are represented by the surrounding dataset change metadata, not by this field.
                  */
                 status?: string | null;
-            };
+            } | null;
             /** @description Field names that changed for an `updated` event. */
             changed_fields?: string[];
             /** @description Flat line name context used by `created` and `removed` events. */
@@ -621,7 +621,7 @@ export interface components {
          *     }
          */
         DatasetStatusResponseDto: {
-            active_snapshot?: null | components["schemas"]["DatasetSnapshotRefDto"];
+            active_snapshot?: components["schemas"]["DatasetSnapshotRefDto"] | null;
             /**
              * Format: int64
              * @description Active N02 station rows exposed through `stations_latest`.

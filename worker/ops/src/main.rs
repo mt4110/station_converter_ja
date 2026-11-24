@@ -229,7 +229,9 @@ async fn reset_verify_db(config: &AppConfig, yes: bool) -> Result<()> {
             let reset_result = async {
                 for table in VERIFY_RESET_TABLES {
                     let statement = format!("TRUNCATE TABLE {table}");
-                    sqlx::query(&statement).execute(&mut *conn).await?;
+                    sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .execute(&mut *conn)
+                        .await?;
                 }
                 Ok::<(), sqlx::Error>(())
             }

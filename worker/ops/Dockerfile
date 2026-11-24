@@ -1,16 +1,16 @@
-FROM rust:1-bookworm AS build
+FROM rust:1.100.0-alpine3.24 AS build
+RUN apk add --no-cache build-base
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY worker ./worker
 COPY storage/migrations ./storage/migrations
 RUN cargo build --locked --release -p station-ops
 
-FROM debian:bookworm-slim
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system station \
-    && useradd --system --gid station --home-dir /app --no-create-home station
+FROM alpine:3.24.4
+RUN apk upgrade --no-cache \
+    && apk add --no-cache ca-certificates \
+    && addgroup -S station \
+    && adduser -S -D -H -h /app -G station station
 WORKDIR /app
 RUN mkdir -p storage/locks storage/sqlite worker/crawler/temp_assets \
     && chown -R station:station /app

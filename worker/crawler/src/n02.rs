@@ -5,7 +5,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -17,6 +16,7 @@ use station_shared::{
         SqlDialect,
     },
 };
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use zip::ZipArchive;
 
 const SOURCE_NAME: &str = "ksj_n02_station";
@@ -371,7 +371,9 @@ async fn persist_snapshot(
         .context("failed to load inserted snapshot id")?;
     let preflight_duration = preflight_start.elapsed();
 
-    let now = Utc::now().to_rfc3339();
+    let now = OffsetDateTime::now_utc()
+        .format(&Rfc3339)?
+        .replace('Z', "+00:00");
     let diff_start = Instant::now();
     let identity_names = fetch_identity_names(&mut tx, dialect).await?;
     let latest_versions = fetch_latest_versions(&mut tx, dialect).await?;
@@ -470,12 +472,12 @@ async fn fetch_snapshot_id(
     dialect: SqlDialect,
     source_sha256: &str,
 ) -> Result<Option<i64>> {
-    let row = sqlx::query(&dialect.statement(
+    let row = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(
         "SELECT id
          FROM source_snapshots
          WHERE source_name = ? AND source_sha256 = ?
         LIMIT 1",
-    ))
+    )))
     .bind(SOURCE_NAME)
     .bind(source_sha256)
     .fetch_optional(&mut **tx)
@@ -493,7 +495,7 @@ async fn insert_source_snapshot(
     source_sha256: &str,
     source_version: Option<&str>,
 ) -> Result<()> {
-    sqlx::query(&dialect.statement(
+    sqlx::query(sqlx::AssertSqlSafe(dialect.statement(
         "INSERT INTO source_snapshots (
            source_name,
            source_kind,
@@ -501,7 +503,7 @@ async fn insert_source_snapshot(
            source_url,
            source_sha256
          ) VALUES (?, ?, ?, ?, ?)",
-    ))
+    )))
     .bind(SOURCE_NAME)
     .bind(SOURCE_KIND)
     .bind(source_version)
@@ -519,11 +521,11 @@ async fn fetch_identity_names(
 ) -> Result<BTreeMap<String, String>> {
     let station_uid_prefix_match =
         prefix_scope_sql(dialect, "station_uid", STATION_UID_PREFIX.len());
-    let rows = sqlx::query(&dialect.statement(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(&format!(
         "SELECT station_uid, canonical_name
              FROM station_identities
              WHERE {station_uid_prefix_match}",
-    )))
+    ))))
     .bind(prefix_scope_arg(dialect, STATION_UID_PREFIX))
     .fetch_all(&mut **tx)
     .await?;
@@ -556,7 +558,7 @@ async fn apply_identity_name_mutations(
         let sql =
             format!("INSERT INTO station_identities (station_uid, canonical_name) VALUES {values}");
         let statement = dialect.statement(&sql);
-        let mut query = sqlx::query(&statement);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(statement));
         for mutation in chunk {
             query = query
                 .bind(&mutation.station_uid)
@@ -585,7 +587,7 @@ async fn apply_identity_name_mutations(
         sql.push(')');
 
         let statement = dialect.statement(&sql);
-        let mut query = sqlx::query(&statement);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(statement));
         for mutation in chunk {
             query = query
                 .bind(&mutation.station_uid)
@@ -662,7 +664,7 @@ async fn fetch_latest_versions(
 ) -> Result<BTreeMap<String, ExistingVersion>> {
     let station_uid_prefix_match =
         prefix_scope_sql(dialect, "station_uid", STATION_UID_PREFIX.len());
-    let rows = sqlx::query(&dialect.statement(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(&format!(
         "SELECT
                id,
                station_uid,
@@ -679,7 +681,7 @@ async fn fetch_latest_versions(
              FROM station_versions
              WHERE valid_to IS NULL
                AND {station_uid_prefix_match}",
-    )))
+    ))))
     .bind(prefix_scope_arg(dialect, STATION_UID_PREFIX))
     .fetch_all(&mut **tx)
     .await?;
@@ -726,7 +728,7 @@ async fn close_station_versions(
         );
 
         let statement = dialect.statement(&sql);
-        let mut query = sqlx::query(&statement).bind(valid_to);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(statement)).bind(valid_to);
         for version_id in chunk {
             query = query.bind(*version_id);
         }
@@ -771,7 +773,7 @@ async fn insert_station_versions(
         );
 
         let statement = dialect.statement(&sql);
-        let mut query = sqlx::query(&statement);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(statement));
         for station in chunk {
             query = query
                 .bind(&station.station_uid)
@@ -799,11 +801,11 @@ async fn fetch_inserted_version_ids(
     dialect: SqlDialect,
     snapshot_id: i64,
 ) -> Result<BTreeMap<String, i64>> {
-    let rows = sqlx::query(&dialect.statement(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(
         "SELECT station_uid, id
          FROM station_versions
          WHERE snapshot_id = ?",
-    ))
+    )))
     .bind(snapshot_id)
     .fetch_all(&mut **tx)
     .await?;
@@ -904,7 +906,7 @@ async fn insert_change_events(
         );
 
         let statement = dialect.statement(&sql);
-        let mut query = sqlx::query(&statement);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(statement));
         for event in chunk {
             query = query
                 .bind(snapshot_id)
@@ -996,17 +998,17 @@ where
 {
     for index in 0..archive.len() {
         let file = archive.by_index(index)?;
-        let name = file.name().to_string();
+        let Ok(name) = file.name() else { continue };
         if name == STATION_GEOJSON_PATH {
-            return Ok(name);
+            return Ok(name.into_owned());
         }
     }
 
     for index in 0..archive.len() {
         let file = archive.by_index(index)?;
-        let name = file.name().to_string();
+        let Ok(name) = file.name() else { continue };
         if name.contains("UTF-8/") && name.ends_with("_Station.geojson") {
-            return Ok(name);
+            return Ok(name.into_owned());
         }
     }
 
@@ -1713,7 +1715,7 @@ mod tests {
         }
     }
 
-    async fn query_count(pool: &AnyPool, sql: &str) -> i64 {
+    async fn query_count(pool: &AnyPool, sql: &'static str) -> i64 {
         sqlx::query(sql)
             .fetch_one(pool)
             .await
