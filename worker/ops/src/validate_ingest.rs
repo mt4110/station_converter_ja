@@ -298,13 +298,13 @@ async fn fetch_latest_snapshot(
     pool: &AnyPool,
     dialect: SqlDialect,
 ) -> Result<Option<SnapshotMeta>> {
-    let row = sqlx::query(&dialect.statement(
+    let row = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(
         "SELECT id, source_version, source_url
          FROM source_snapshots
          WHERE source_name = ?
          ORDER BY id DESC
          LIMIT 1",
-    ))
+    )))
     .bind(SOURCE_NAME)
     .fetch_optional(pool)
     .await?;
@@ -359,7 +359,7 @@ async fn fetch_latest_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<Lat
             "SUM(CASE WHEN latitude >= ? AND latitude <= ? AND longitude >= ? AND longitude <= ? AND (latitude < ? OR latitude > ? OR longitude < ? OR longitude > ?) THEN 1 ELSE 0 END)"
         ),
     );
-    let row = sqlx::query(&dialect.statement(&sql))
+    let row = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(&sql)))
         .bind(HARD_MIN_LATITUDE)
         .bind(HARD_MAX_LATITUDE)
         .bind(HARD_MIN_LONGITUDE)
@@ -425,7 +425,7 @@ async fn fetch_integrity_metrics(pool: &AnyPool, dialect: SqlDialect) -> Result<
             "SUM(CASE WHEN sv.valid_to IS NOT NULL AND sv.valid_to <= sv.valid_from THEN 1 ELSE 0 END)"
         ),
     );
-    let row = sqlx::query(&dialect.statement(&sql))
+    let row = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(&sql)))
         .bind(STATION_UID_PREFIX)
         .fetch_one(pool)
         .await?;
@@ -456,7 +456,7 @@ async fn fetch_duplicate_station_uid_count(pool: &AnyPool, dialect: SqlDialect) 
          ) duplicate_station_uids",
         integer_aggregate_sql(dialect, "COUNT(*)"),
     );
-    let row = sqlx::query(&dialect.statement(&sql))
+    let row = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(&sql)))
         .bind(STATION_UID_PREFIX)
         .fetch_one(pool)
         .await?;
@@ -491,7 +491,7 @@ async fn fetch_change_summary(
             "SUM(CASE WHEN change_kind = 'removed' THEN 1 ELSE 0 END)"
         ),
     );
-    let counts = sqlx::query(&dialect.statement(&counts_sql))
+    let counts = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(&counts_sql)))
         .bind(snapshot_id)
         .bind(STATION_UID_PREFIX)
         .fetch_one(pool)
@@ -504,7 +504,7 @@ async fn fetch_change_summary(
            AND {station_uid_prefix_match}",
         integer_aggregate_sql(dialect, "COUNT(*)"),
     );
-    let latest_versions = sqlx::query(&dialect.statement(&latest_versions_sql))
+    let latest_versions = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(&latest_versions_sql)))
         .bind(snapshot_id)
         .bind(STATION_UID_PREFIX)
         .fetch_one(pool)

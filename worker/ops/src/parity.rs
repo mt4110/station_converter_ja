@@ -149,20 +149,22 @@ fn sqlite_url_requests_memory(sqlite_url: &str) -> bool {
     })
 }
 
-async fn table_count(pool: &AnyPool, dialect: SqlDialect, table: &str) -> Result<i64> {
+async fn table_count(pool: &AnyPool, dialect: SqlDialect, table: &'static str) -> Result<i64> {
     let sql = format!(
         "SELECT {} AS count FROM {table}",
         integer_aggregate_sql(dialect, "COUNT(*)")
     );
-    let row = sqlx::query(&dialect.statement(&sql))
+    let row = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(&sql)))
         .fetch_one(pool)
         .await?;
     Ok(row.try_get("count")?)
 }
 
-async fn sqlite_table_count(pool: &SqlitePool, table: &str) -> Result<i64> {
+async fn sqlite_table_count(pool: &SqlitePool, table: &'static str) -> Result<i64> {
     let sql = format!("SELECT CAST(COUNT(*) AS BIGINT) AS count FROM {table}");
-    let row = sqlx::query(&sql).fetch_one(pool).await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await?;
     Ok(row.try_get("count")?)
 }
 
@@ -176,13 +178,13 @@ async fn latest_source_snapshot(
     pool: &AnyPool,
     dialect: SqlDialect,
 ) -> Result<Option<LatestSourceSnapshot>> {
-    let row = sqlx::query(&dialect.statement(
+    let row = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(
         "SELECT id, source_sha256
          FROM source_snapshots
          WHERE source_name = ?
          ORDER BY id DESC
          LIMIT 1",
-    ))
+    )))
     .bind(SOURCE_NAME)
     .fetch_optional(pool)
     .await?;

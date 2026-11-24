@@ -10,6 +10,7 @@ use station_shared::{
     config::AppConfig,
     db::{decode_optional_string, decode_required_string, SqlDialect},
 };
+use time::{macros::format_description, OffsetDateTime};
 use tracing::info;
 
 pub use n02::{IngestReport, PersistChunkConfig};
@@ -18,6 +19,8 @@ pub const DEFAULT_SOURCE_SNAPSHOT_URL: &str =
     "https://nlftp.mlit.go.jp/ksj/gml/data/N02/N02-24/N02-24_GML.zip";
 pub const N02_INGEST_LOCK_NAME: &str = "ingest-n02";
 const N02_SOURCE_NAME: &str = "ksj_n02_station";
+const SNAPSHOT_TIMESTAMP_FORMAT: &[time::format_description::FormatItem<'static>] =
+    format_description!("[year][month][day][hour][minute][second]");
 
 #[derive(Debug, Serialize)]
 pub struct SourceFreshnessReport {
@@ -58,7 +61,8 @@ pub async fn run_n02_ingest_cycle(
     let bytes = load_snapshot_bytes(source_url).await?;
     let load_ms = duration_ms(load_start.elapsed());
 
-    let filename = format!("snapshot-{}.zip", chrono::Utc::now().format("%Y%m%d%H%M%S"));
+    let timestamp = OffsetDateTime::now_utc().format(SNAPSHOT_TIMESTAMP_FORMAT)?;
+    let filename = format!("snapshot-{timestamp}.zip");
     let output_path = format!("{}/{}", config.temp_asset_dir, filename);
 
     let save_start = Instant::now();
@@ -161,7 +165,8 @@ fn ensure_source_url_allowed(source_url: &str, config: &AppConfig) -> Result<()>
 }
 
 async fn save_loaded_snapshot(config: &AppConfig, bytes: &[u8]) -> Result<(String, u64)> {
-    let filename = format!("snapshot-{}.zip", chrono::Utc::now().format("%Y%m%d%H%M%S"));
+    let timestamp = OffsetDateTime::now_utc().format(SNAPSHOT_TIMESTAMP_FORMAT)?;
+    let filename = format!("snapshot-{timestamp}.zip");
     let output_path = format!("{}/{}", config.temp_asset_dir, filename);
     let save_start = Instant::now();
     tokio::fs::write(&output_path, bytes).await?;
@@ -179,13 +184,13 @@ async fn fetch_latest_n02_snapshot(
     pool: &AnyPool,
     dialect: SqlDialect,
 ) -> Result<Option<LatestN02Snapshot>> {
-    let row = sqlx::query(&dialect.statement(
+    let row = sqlx::query(sqlx::AssertSqlSafe(dialect.statement(
         "SELECT id, source_version, source_sha256
          FROM source_snapshots
          WHERE source_name = ?
          ORDER BY id DESC
          LIMIT 1",
-    ))
+    )))
     .bind(N02_SOURCE_NAME)
     .fetch_optional(pool)
     .await?;

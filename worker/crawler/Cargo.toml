@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
+time.workspace = true
 clap.workspace = true
 reqwest.workspace = true
 serde.workspace = true

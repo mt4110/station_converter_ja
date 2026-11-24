@@ -1,11 +1,13 @@
-FROM rust:1-bookworm AS build
+FROM rust:1.100.0-alpine3.24 AS build
+RUN apk upgrade --no-cache \
+    && apk add --no-cache build-base
 WORKDIR /app
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY worker ./worker
 COPY storage ./storage
-RUN cargo build --release -p station-crawler
+RUN cargo build --locked --release -p station-crawler
 
-FROM debian:bookworm-slim
+FROM cgr.dev/chainguard/static:latest@sha256:54b5f14edad6f2554774d499539e837588a501bd5bf22ac6cd97b1068c35d44d
 WORKDIR /app
 COPY --from=build /app/target/release/station-crawler /usr/local/bin/station-crawler
-CMD ["station-crawler", "--once"]
+CMD ["/usr/local/bin/station-crawler", "--once"]

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+# The upstream entrypoint uses this helper to run the server as mysql.
+if [ "$#" -lt 2 ] || [ "$1" != mysql ]; then
+    echo 'Expected mysql followed by a command' >&2
+    exit 1
+fi
+shift
+exec setpriv --reuid mysql --regid mysql --init-groups -- "$@"

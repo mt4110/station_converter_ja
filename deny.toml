@@ -3,9 +3,7 @@ all-features = false
 no-default-features = false
 
 [advisories]
-ignore = [
-  { id = "RUSTSEC-2023-0071", reason = "Transitive through sqlx-mysql; no patched rsa release is available yet, and this service does not perform RSA private-key operations. Revisit when sqlx or rsa ships a fix." },
-]
+ignore = []
 
 [licenses]
 allow = [

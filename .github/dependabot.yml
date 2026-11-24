@@ -34,3 +34,20 @@ updates:
       time: "09:30"
       timezone: Asia/Tokyo
     open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /worker/api
+      - /worker/crawler
+      - /worker/ops
+      - /deploy/docker/adminer
+      - /deploy/docker/mysql-ci
+      - /deploy/docker/postgres
+      - /deploy/docker/postgres-ci
+      - /deploy/docker/redis
+    schedule:
+      interval: daily
+      time: "09:45"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5

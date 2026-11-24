@@ -200,7 +200,7 @@ async fn copy_source_snapshots(
         source_dialect.text_cast("downloaded_at")
     );
 
-    let mut rows = sqlx::query(&query).fetch(source_pool);
+    let mut rows = sqlx::query(sqlx::AssertSqlSafe(query)).fetch(source_pool);
     let mut count = 0;
 
     while let Some(row) = rows.try_next().await? {
@@ -250,7 +250,7 @@ async fn copy_station_identities(
         source_dialect.text_cast("created_at")
     );
 
-    let mut rows = sqlx::query(&query).fetch(source_pool);
+    let mut rows = sqlx::query(sqlx::AssertSqlSafe(query)).fetch(source_pool);
     let mut count = 0;
 
     while let Some(row) = rows.try_next().await? {
@@ -322,7 +322,7 @@ async fn copy_station_versions(
 ) -> Result<usize> {
     let query = station_versions_select_query(source_dialect);
 
-    let mut rows = sqlx::query(&query).fetch(source_pool);
+    let mut rows = sqlx::query(sqlx::AssertSqlSafe(query)).fetch(source_pool);
     let mut count = 0;
 
     while let Some(row) = rows.try_next().await? {
@@ -400,7 +400,7 @@ async fn copy_station_change_events(
         source_dialect.text_cast("created_at")
     );
 
-    let mut rows = sqlx::query(&query).fetch(source_pool);
+    let mut rows = sqlx::query(sqlx::AssertSqlSafe(query)).fetch(source_pool);
     let mut count = 0;
 
     while let Some(row) = rows.try_next().await? {

@@ -2,7 +2,7 @@
   description = "station_converter_ja development shell";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -20,8 +20,7 @@
             rust-analyzer
             openssl
             pkg-config
-            nodejs_22
-            nodePackages.npm
+            nodejs_26
             git
             jq
             unzip

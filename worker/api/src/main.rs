@@ -131,10 +131,7 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         (None, _) => "disabled",
     };
 
-    match sqlx::query(&state.dialect.statement("SELECT 1"))
-        .execute(&state.pool)
-        .await
-    {
+    match sqlx::query("SELECT 1").execute(&state.pool).await {
         Ok(_) => {
             let dataset = readiness_dataset_summary(&state)
                 .await
@@ -219,7 +216,7 @@ async fn fetch_n02_dataset_aggregates(state: &AppState) -> Result<N02DatasetAggr
         integer_aggregate_sql(state.dialect, "COUNT(DISTINCT snapshot_id)"),
         integer_aggregate_sql(state.dialect, "MAX(snapshot_id)"),
     );
-    let row = sqlx::query(&state.dialect.statement(&sql))
+    let row = sqlx::query(sqlx::AssertSqlSafe(state.dialect.statement(&sql)))
         .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
         .fetch_one(&state.pool)
         .await
@@ -329,7 +326,7 @@ async fn readiness_dataset_summary(state: &AppState) -> Result<ReadinessDatasetD
          FROM stations_latest
          WHERE {station_uid_scope}",
     );
-    let row = sqlx::query(&state.dialect.statement(&sql))
+    let row = sqlx::query(sqlx::AssertSqlSafe(state.dialect.statement(&sql)))
         .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
         .fetch_one(&state.pool)
         .await
@@ -408,7 +405,7 @@ async fn search_stations(
            {station_name_order}
          LIMIT ?",
     );
-    let rows = sqlx::query(&state.dialect.statement(&sql))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(state.dialect.statement(&sql)))
         .bind(&like)
         .bind(&query)
         .bind(&prefix)
@@ -446,13 +443,13 @@ async fn dataset_status(State(state): State<AppState>) -> ApiResult<DatasetStatu
     let distinct_line_count = counts.distinct_line_count;
     let active_version_snapshot_count = counts.active_version_snapshot_count;
 
-    let active_snapshot = sqlx::query(&state.dialect.statement(
+    let active_snapshot = sqlx::query(sqlx::AssertSqlSafe(state.dialect.statement(
         "SELECT id, source_version, source_url
          FROM source_snapshots
          WHERE source_name = ?
          ORDER BY id DESC
          LIMIT 1",
-    ))
+    )))
     .bind(N02_SOURCE_NAME)
     .fetch_optional(&state.pool)
     .await
@@ -572,7 +569,7 @@ async fn dataset_snapshots(
          ORDER BY ss.id DESC
          LIMIT ?",
     );
-    let rows = sqlx::query(&state.dialect.statement(&sql))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(state.dialect.statement(&sql)))
         .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
         .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX))
         .bind(N02_SOURCE_NAME)
@@ -678,7 +675,7 @@ async fn dataset_changes(
          LIMIT ?",
     );
     let statement = state.dialect.statement(&sql);
-    let mut query = sqlx::query(&statement)
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(statement))
         .bind(N02_SOURCE_NAME)
         .bind(prefix_scope_arg(state.dialect, N02_STATION_UID_PREFIX));
 
@@ -738,12 +735,12 @@ async fn ensure_dataset_snapshot_exists(
     state: &AppState,
     snapshot_id: i64,
 ) -> Result<(), ApiError> {
-    let exists = sqlx::query(&state.dialect.statement(
+    let exists = sqlx::query(sqlx::AssertSqlSafe(state.dialect.statement(
         "SELECT id
          FROM source_snapshots
          WHERE id = ? AND source_name = ?
          LIMIT 1",
-    ))
+    )))
     .bind(snapshot_id)
     .bind(N02_SOURCE_NAME)
     .fetch_optional(&state.pool)
@@ -783,7 +780,7 @@ async fn nearby_stations(
     ApiQuery(params): ApiQuery<NearbyParams>,
 ) -> ApiResult<NearbyStationsResponseDto> {
     let limit = normalized_limit(params.limit);
-    let rows = sqlx::query(&state.dialect.statement(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(state.dialect.statement(
         "SELECT
            station_uid,
            station_name,
@@ -798,7 +795,7 @@ async fn nearby_stations(
            ((longitude - ?) * (longitude - ?)) ASC,
            station_name ASC
          LIMIT ?",
-    ))
+    )))
     .bind(params.lat)
     .bind(params.lat)
     .bind(params.lng)
@@ -863,13 +860,13 @@ async fn line_catalog(
     );
     let statement = state.dialect.statement(&sql);
     let rows = if query.is_empty() {
-        sqlx::query(&statement)
+        sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(limit)
             .fetch_all(&state.pool)
             .await
     } else {
         let like = format!("%{query}%");
-        sqlx::query(&statement)
+        sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(like)
             .bind(limit)
             .fetch_all(&state.pool)
@@ -947,13 +944,13 @@ async fn line_stations(
     );
     let statement = state.dialect.statement(&sql);
     let rows = if let Some(operator_name) = operator_name.as_deref() {
-        sqlx::query(&statement)
+        sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(&line_name)
             .bind(operator_name)
             .fetch_all(&state.pool)
             .await
     } else {
-        sqlx::query(&statement)
+        sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(&line_name)
             .fetch_all(&state.pool)
             .await
@@ -1005,7 +1002,7 @@ async fn operator_stations(
          WHERE {operator_name_match}
          ORDER BY {line_name_order}, {station_name_order}",
     );
-    let rows = sqlx::query(&state.dialect.statement(&sql))
+    let rows = sqlx::query(sqlx::AssertSqlSafe(state.dialect.statement(&sql)))
         .bind(&operator_name)
         .fetch_all(&state.pool)
         .await

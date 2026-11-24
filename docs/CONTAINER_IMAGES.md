@@ -13,12 +13,14 @@ GHCR には次の 2 つの image を publish します。
 
 本番 ingest の入口は `station-ops job ingest-n02` です。
 `station-crawler` は dev helper であり、本番常駐 worker として扱いません。
+API・ops・crawler の実行イメージは、ダイジェストで固定した Chainguard static を使用します。
+コンテナ内の操作には各バイナリを直接指定します。
 
 ## Publish policy
 
 `.github/workflows/container-images.yml` が image build / publish を担当します。
 
-- pull request: build only
+- pull request: ビルドと OSV 検査
 - push to `main`: publish `sha-<short-sha>` tag
 - push to `v*` tag: publish `sha-<short-sha>` tag and release tag
 
@@ -34,6 +36,17 @@ docker build -f worker/api/Dockerfile -t station-converter-ja-api:local .
 docker build -f worker/ops/Dockerfile -t station-converter-ja-ops:local .
 ```
 
+Compose の PostgreSQL、Redis、Adminer は `deploy/docker/` の Dockerfile からビルドします。
+ベースイメージを取得し直してパッケージ更新を適用するときは、対象サービスを再ビルドします。
+
+```bash
+docker compose --profile cache --profile dbweb build --pull redis adminer
+```
+
+CI と SQLite リリース用の一時 PostgreSQL は、更新済みイメージの OSV 検査が成功してから起動します。
+CI 用の一時 MySQL も更新済みイメージを使い、Oracle Linux の RPM を Trivy で検査してから起動します。
+配布元イメージも依存関係の必須チェックで検査します。
+
 ## Minimal run with Docker Compose DB
 
 PostgreSQL を primary write DB として起動します。
@@ -42,6 +55,38 @@ SQLite は read-only artifact の出力先であり、primary write DB として
 ```bash
 docker compose --project-name station-converter-ja up -d postgres
 ```
+
+### 既存の Debian 版 PostgreSQL 16 から Alpine 版へ移行
+
+Alpine 版は新しい `postgres_alpine_data` ボリュームを使います。
+`docker-compose.local.yml` を併用する場合は `.docker-data/postgres-alpine` が新しい保存先です。
+既存の Debian データを移行する場合は、アプリと取り込みジョブからの書き込みを止め、
+同じ Compose プロジェクトと構成ファイルを指定して以下を実行します。
+
+```bash
+umask 077
+backup="$(mktemp "${TMPDIR:-/tmp}/station-postgres-XXXXXX")"
+docker compose exec -T postgres psql -U postgres -d station_db -c \
+  'SELECT count(*) FROM stations_latest;'
+docker compose exec -T postgres pg_dump -U postgres -Fc station_db > "$backup" &&
+  docker compose exec -T postgres pg_restore --list < "$backup" >/dev/null
+```
+
+ダンプの検証が成功したら、空の Alpine 側ボリュームで起動して復元します。
+
+```bash
+docker compose up -d --build --wait postgres
+docker compose exec -T postgres pg_restore --exit-on-error --single-transaction \
+  -U postgres -d station_db < "$backup"
+docker compose exec -T postgres psql -U postgres -d station_db -c \
+  'SELECT count(*) FROM stations_latest;'
+```
+
+移行前と駅数を照合し、アプリからの読み出しを確認してから書き込みを再開します。
+元の Compose 定義と Debian 側ボリューム、ダンプは復旧用に保持します。
+この手順はリポジトリ標準の `station_db` が対象です。
+
+### API と ops の起動
 
 published image を使う場合は tag を指定します。
 `main` 由来なら `sha-<short-sha>`、release 由来なら `v0.1.5` のような tag です。

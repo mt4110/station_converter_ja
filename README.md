@@ -215,7 +215,7 @@ sudo ./scripts/install_release_binaries.sh /opt/station_converter_ja station-con
 ### container image を使う場合
 
 GHCR には `station-api` 用と `station-ops` 用の image を分けて publish します。
-tag policy と Docker の最小起動例は [`docs/CONTAINER_IMAGES.md`](docs/CONTAINER_IMAGES.md) を参照してください。
+タグの扱い、Docker Compose の起動例、サービスイメージの更新は [`docs/CONTAINER_IMAGES.md`](docs/CONTAINER_IMAGES.md) を参照してください。
 
 ## Verify / Release
 

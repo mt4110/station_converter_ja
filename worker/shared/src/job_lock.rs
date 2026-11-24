@@ -7,9 +7,9 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use chrono::Utc;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const HOLDER_SUMMARY_MAX_BYTES: usize = 4096;
 
@@ -94,7 +94,9 @@ pub fn try_acquire_job_lock(
     write_holder(
         &mut file,
         &LockHolder {
-            acquired_at: Utc::now().to_rfc3339(),
+            acquired_at: OffsetDateTime::now_utc()
+                .format(&Rfc3339)?
+                .replace('Z', "+00:00"),
             pid: std::process::id(),
             service_name: service_name.to_string(),
         },
