@@ -13,6 +13,8 @@ GHCR には次の 2 つの image を publish します。
 
 本番 ingest の入口は `station-ops job ingest-n02` です。
 `station-crawler` は dev helper であり、本番常駐 worker として扱いません。
+API・ops・crawler の実行イメージは、ダイジェストで固定した Chainguard static を使用します。
+コンテナ内の操作には各バイナリを直接指定します。
 
 ## Publish policy
 

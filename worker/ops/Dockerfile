@@ -6,16 +6,12 @@ COPY Cargo.toml Cargo.lock ./
 COPY worker ./worker
 COPY storage/migrations ./storage/migrations
 RUN cargo build --locked --release -p station-ops
+RUN mkdir -p /runtime/storage/locks /runtime/storage/sqlite /runtime/worker/crawler/temp_assets
 
-FROM alpine:3.24.4
-RUN apk upgrade --no-cache \
-    && apk add --no-cache ca-certificates \
-    && addgroup -S station \
-    && adduser -S -D -H -h /app -G station station
+FROM cgr.dev/chainguard/static:latest@sha256:54b5f14edad6f2554774d499539e837588a501bd5bf22ac6cd97b1068c35d44d
 WORKDIR /app
-RUN mkdir -p storage/locks storage/sqlite worker/crawler/temp_assets \
-    && chown -R station:station /app
+COPY --from=build --chown=100:101 /runtime/ /app/
 COPY --from=build /app/target/release/station-ops /usr/local/bin/station-ops
-USER station
-ENTRYPOINT ["station-ops"]
+USER 100:101
+ENTRYPOINT ["/usr/local/bin/station-ops"]
 CMD ["--help"]

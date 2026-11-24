@@ -7,9 +7,7 @@ COPY worker ./worker
 COPY storage ./storage
 RUN cargo build --locked --release -p station-crawler
 
-FROM alpine:3.24.4
-RUN apk upgrade --no-cache \
-    && apk add --no-cache ca-certificates
+FROM cgr.dev/chainguard/static:latest@sha256:54b5f14edad6f2554774d499539e837588a501bd5bf22ac6cd97b1068c35d44d
 WORKDIR /app
 COPY --from=build /app/target/release/station-crawler /usr/local/bin/station-crawler
-CMD ["station-crawler", "--once"]
+CMD ["/usr/local/bin/station-crawler", "--once"]
